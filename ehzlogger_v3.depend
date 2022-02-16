@@ -1,0 +1,90 @@
+# depslib dependency file v1.0
+1636906413 source:/home/herubuntu/Projekte/ehzlogger_v3/main.c
+	<stdio.h>
+	<stdint.h>
+	<string.h>
+	<unistd.h>
+	<signal.h>
+	<stdlib.h>
+	<time.h>
+	<termios.h>
+	<sys/ioctl.h>
+	<sys/stat.h>
+	<fcntl.h>
+	<stdbool.h>
+	<stdint-gcc.h>
+	<mosquitto.h>
+	"ehzdefines.h"
+
+1636889540 source:/home/herubuntu/Projekte/ehzlogger_v3/send_data.c
+	<stdio.h>
+	<stdlib.h>
+	<math.h>
+	<time.h>
+	<termios.h>
+	<sys/ioctl.h>
+	<sys/stat.h>
+	<unistd.h>
+	<string.h>
+	<fcntl.h>
+	<stdbool.h>
+	<stdint.h>
+	"ehzdefines.h"
+
+1636896659 /home/herubuntu/Projekte/ehzlogger_v3/ehzdefines.h
+
+1636888027 source:/home/herubuntu/Projekte/ehzlogger_v3/timedate.c
+	<stdio.h>
+	<time.h>
+
+1636889301 source:/home/herubuntu/Projekte/ehzlogger_v3/util.c
+	<stdio.h>
+	<time.h>
+	<stdlib.h>
+	<sys/stat.h>
+	<stdint-gcc.h>
+
+1644953543 source:/home/pi/Projekte/ehzlogger_v3/main.c
+	<stdio.h>
+	<stdint.h>
+	<string.h>
+	<unistd.h>
+	<signal.h>
+	<stdlib.h>
+	<time.h>
+	<termios.h>
+	<sys/ioctl.h>
+	<sys/stat.h>
+	<fcntl.h>
+	<stdbool.h>
+	<stdint-gcc.h>
+	<mosquitto.h>
+	"ehzdefines.h"
+
+1644954251 /home/pi/Projekte/ehzlogger_v3/ehzdefines.h
+
+1644953549 source:/home/pi/Projekte/ehzlogger_v3/send_data.c
+	<stdio.h>
+	<stdlib.h>
+	<math.h>
+	<time.h>
+	<termios.h>
+	<sys/ioctl.h>
+	<sys/stat.h>
+	<unistd.h>
+	<string.h>
+	<fcntl.h>
+	<stdbool.h>
+	<stdint.h>
+	"ehzdefines.h"
+	"pvoutkeys.h"
+
+1644954251 source:/home/pi/Projekte/ehzlogger_v3/util.c
+	<stdio.h>
+	<time.h>
+	<stdlib.h>
+	<sys/stat.h>
+	<stdint-gcc.h>
+
+1644953536 /home/pi/Projekte/ehzlogger_v3/pvoutkeys.h
+

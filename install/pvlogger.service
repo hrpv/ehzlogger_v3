@@ -1,0 +1,21 @@
+[Unit]
+Description=My pvlogger service
+After=syslog.target network.target ntp.service mosquitto.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+TimeoutStartSec=30
+Restart=on-failure
+#Restart=on-success
+RestartSec=300s
+ExecStartPre=/bin/sleep 10
+ExecStart=/usr/bin/emhlogstart.sh
+SyslogIdentifier=pvlogger
+#ExecStop=
+
+[Install]
+WantedBy=multi-user.target
+
+
