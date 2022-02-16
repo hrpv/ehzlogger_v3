@@ -3,22 +3,26 @@
 Use of an SMA PV inverter with Bluetooth and an EHZ bidirectional meter from 2010 together with evcc. 
 In order for the PV charging to work well with evcc, the grid power and the PV output should be measured. 
 
-Installation:
+# Installation
 required lib libmosquitto.so.1
-check if already installed: 
+
+check if already installed 
 /usr/lib/x86_64-linux-gnu/libmosquitto.so.1
+
 or /usr/lib/arm-linux-gnueabihf/libmosquitto.so.1
-if not installed: sudo apt-get install libmosquitto-dev libmosquitto1 mosquitto-dev
+
+if not installed
+sudo apt-get install libmosquitto-dev libmosquitto1 mosquitto-dev
 
 
-make
+# make
 
 install service pvlogger: 
-instpvlogger.sh
+# instpvlogger.sh
 
 
 
-additional software
+# additional software
 
 vzlogger:
 --------
@@ -32,21 +36,26 @@ No local database is used, data are stored in a logfile and on pvoutput.org
 sbfspot is called with -nocsv -nosql Parameter
 SBFspot  -v -finq -nocsv -nosql -mqtt
 
-NOTE: since version 3.8.3 a 5 minute cronjob is installed, remove this
+# NOTE: 
+since version 3.8.3 a 5 minute cronjob is installed, remove this
 because it collides with the 1 minute call from ehzlogger
+
 sudo cat -v /var/spool/cron/crontabs/pi
-## SBFspot
+
+```bash
+# SBFspot
 */5 6-22 * * * /usr/local/bin/sbfspot.3/daydata 
-
 55 05 * * * /usr/local/bin/sbfspot.3/monthdata
+```
 
-comment the two lines with # with: crontab -e
+comment the two lines with `#` with: crontab -e
 
 
 evcc:
 ------ 
 https://evcc.io
 sample meters in evcc.yaml
+```yaml 
 meters:
 # gridmeter output wird erzeugt von ehzlogger_v3 (service pvlogger) alle 60 s (vpower-epower)
 - name: gridmeter # Name des Zählers. Falls du diesen änderst, musst du die site-Konfiguration auch anpassen.
@@ -66,7 +75,7 @@ meters:
     broker: 127.0.0.1:1883
     topic: ehzmeter/pvpower
     timeout: 360s # don't accept values older than timeout
-
+```
 
 account on pvoutput.org
 -------------------------
