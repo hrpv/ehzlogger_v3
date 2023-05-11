@@ -10,8 +10,34 @@
 // Die Werte des EMH Zaehlers und SMA WR werden weiterhin per curl unverändert an den Account Aichwald bei pvoutput.org weitergeschickt
 // -------------------------------------------------------------------------------------------------------------------------------------------
 
+// grosser Update 10.05.2023:
+// was noch fehlt ist die Erfassung von den Hoymiles Wechselrichtern
+// damit die PV Leistung ungefähr passt wird temporär einfach die SMA WR Leistung für die Rechnung verdoppelt, damit nicht immer
+// negative Hausverbrauchswerte rauskommen, beim Plausi-Check
+
+
+// die Werte für Einspeisung und Verbrauch und aktuelle Leistung werden künftig von
+// von dem EM24 Ethernet Zähler geliefert
+
+// mbmd/cgex3x02-1/Power  Grid Power float in Watt. plus Bezug negativ Lieferung
+// mbmd/cgex3x02-1/Import float Bezug in kwh
+// mbmd/cgex3x02-1/Export float Lieferung in kwh
+
+
+
+
+
+
+// Zaehler Z2 ist derzeit noch ohne Pin,liefert Werte in Wh, wird aber ohnehin nur einmal täglich kurz vor Mitternacht erfasst:
+//vzlogger/data/chn0/agg { "timestamp": 1683731700000, "value": 3000 }
+//vzlogger/data/chn1/agg { "timestamp": 1683731700000, "value": 16000 }
+
+// Zaehler Z1 wird nicht mehr erfasst, der sollte in etwa die gleichen Werte übers Jahr haben wie der EM24 Zaehler
 //vzlogger/data/chn0/agg { "timestamp": 1636369980000, "value": 38118.691500000001 }
 //vzlogger/data/chn1/agg { "timestamp": 1636369980000, "value": 42601.953500000003 }
+
+// SMA Zaehler einlesen wie gehabt.
+// eToday und Etotal für Mitternachtserfassung
 //sbfspot_2100346262 {"Timestamp": "08/11/2021 18:23:54","SunRise": "08/11/2021 07:21:00","SunSet": "08/11/2021 16:50:00","InvSerial": 2100346262,
 //"InvName": "SN: 2100346262","InvTime": "08/11/2021 18:23:53","InvStatus": "Ok","InvTemperature": 0.000,"InvGridRelay": "Information not available",
 //"EToday": 15.175,"ETotal": 59975.397,"PACTot": 0.000,"UDC1": 0.000,"UDC2": 0.000,"IDC1": 0.000,"IDC2": 0.000,
@@ -80,13 +106,19 @@
 #define MQTT_TOPIC_CHN1 "vzlogger/data/chn1/agg"   // EHZ D0 2.8.1 Einspeisung
 #define MQTT_TOPIC_WR   "sbfspot_2100346262"       // SMA Wr mit Seriennummer
 
-#define EHZTOPIC_GRIDPWR "ehzmeter/power"          // gridpower für evcc
+// unsused: gridpower is now "mbmd/cgex3x02-1/Power"
+// #define EHZTOPIC_GRIDPWR "ehzmeter/power"       // gridpower für evcc
+
 #define EHZTOPIC_PVPWR "ehzmeter/pvpower"          // pvpower fuer evcc
+
+#define MBMD_TOPIC_PWR "mbmd/cgex3x02-1/Power"     // float in Watt. plus Bezug negativ Lieferung
+#define MBMD_TOPIC_IMP "mbmd/cgex3x02-1/Import"    // float Bezug in kwh
+#define MBMD_TOPIC_EXP "mbmd/cgex3x02-1/Export"    // float Lieferung in kwh
 
 #define MINCONS 100    //minimum 100W Power consumption
 
 
-static char *ptopics[] = {MQTT_TOPIC_CHN0,MQTT_TOPIC_CHN1,MQTT_TOPIC_WR};
+static char *ptopics[] = {MQTT_TOPIC_CHN0,MQTT_TOPIC_CHN1,MQTT_TOPIC_WR,MBMD_TOPIC_PWR,MBMD_TOPIC_IMP,MBMD_TOPIC_EXP};
 // static int numtopics=3;
 
 static volatile int run = 1;       // to check if volatile is really needed
@@ -95,10 +127,18 @@ static volatile int run = 1;       // to check if volatile is really needed
 static volatile int chan0_flag=0;
 static volatile int chan1_flag=0;
 static volatile int wr_flag=0;
+static volatile int mb_pwr_flag=0;
+static volatile int mb_imp_flag=0;
+static volatile int mb_exp_flag=0;
+
 
 static char wr_buf[1024];
 static char ch0_buf[512];
 static char ch1_buf[512];
+
+static volatile int mb_pwr=0;  // int power in watt
+static volatile int mb_imp=0;  // int import energy in 0.1 wh
+static volatile int mb_exp=0;  // int export energy in 0.1 wh
 
 
 // signal handler for for CTL C and terminate process
@@ -141,10 +181,15 @@ void on_connect(struct mosquitto *mosq, void *obj, int reason_code)
 	/* Making subscriptions in the on_connect() callback means that if the
 	 * connection drops and is automatically resumed by the client, then the
 	 * subscriptions will be recreated when the client reconnects. */
-  //  rc= mosquitto_subscribe_multiple(mosq, NULL, numtopics, ptopics, 1, 0, NULL);  // subscribe to a lost of topics
-    rc=mosquitto_subscribe(mosq,NULL,ptopics[0],1);
+  //  rc= mosquitto_subscribe_multiple(mosq, NULL, numtopics, ptopics, 1, 0, NULL);  // subscribe to a lots of topics
+
+    rc= mosquitto_subscribe(mosq,NULL,ptopics[0],1);
     rc+=mosquitto_subscribe(mosq,NULL,ptopics[1],1);
     rc+=mosquitto_subscribe(mosq,NULL,ptopics[2],1);
+    rc+=mosquitto_subscribe(mosq,NULL,ptopics[3],1);
+    rc+=mosquitto_subscribe(mosq,NULL,ptopics[4],1);
+    rc+=mosquitto_subscribe(mosq,NULL,ptopics[5],1);
+
 	if(rc != MOSQ_ERR_SUCCESS){
 		fprintf(stderr, "Error subscribing: %s\n", mosquitto_strerror(rc));
 		/* We might as well disconnect if we were unable to subscribe */
@@ -181,30 +226,53 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
 {
 	bool match = false;
 	/* This blindly prints the payload, but the payload can be anything so take care. */
-    if (verbose) printf("%s %d %s\n", msg->topic, msg->qos, (char *)msg->payload);
+    if (trace) printf("%s %d %s\n", msg->topic, msg->qos, (char *)msg->payload);
 
-	mosquitto_topic_matches_sub(MQTT_TOPIC_CHN0, msg->topic, &match);
-	if (match) {
-	    if (verbose) printf("chan0 received \n");
-        chan0_flag=1;
-        strncpy(ch0_buf,msg->payload, sizeof(ch0_buf)-1);
-	}
-	else {
+    do {
+        mosquitto_topic_matches_sub(MQTT_TOPIC_CHN0, msg->topic, &match);
+        if (match) {
+            if (verbose) printf("chan0 received \n");
+            chan0_flag=1;
+            strncpy(ch0_buf,msg->payload, sizeof(ch0_buf)-1);
+            break;
+        }
         mosquitto_topic_matches_sub(MQTT_TOPIC_CHN1, msg->topic, &match);
         if (match) {
             if (verbose) printf("chan1 received \n");
             chan1_flag=1;
             strncpy(ch1_buf,msg->payload, sizeof(ch1_buf)-1);
+            break;
         }
-        else {
-            mosquitto_topic_matches_sub(MQTT_TOPIC_WR, msg->topic, &match);
-            if (match) {
-                if (verbose) printf("wr received \n");
-                wr_flag=1;
-                strncpy(wr_buf,msg->payload, sizeof(wr_buf)-1);
-            }
+        mosquitto_topic_matches_sub(MQTT_TOPIC_WR, msg->topic, &match);
+        if (match) {
+            if (verbose) printf("wr received \n");
+            wr_flag=1;
+            strncpy(wr_buf,msg->payload, sizeof(wr_buf)-1);
+            break;
         }
-	}
+        mosquitto_topic_matches_sub(MBMD_TOPIC_PWR, msg->topic, &match);
+        if (match) {
+            mb_pwr_flag=1;
+            mb_pwr = atof(msg->payload);
+            if (trace) printf("mbmd gridpwr received %d\n",mb_pwr);
+            break;
+        }
+        mosquitto_topic_matches_sub(MBMD_TOPIC_IMP, msg->topic, &match);
+        if (match) {
+            mb_imp_flag=1;
+            mb_imp = 10000 * atof(msg->payload);
+            if (trace) printf("mbmd import received %d\n", mb_imp);
+            break;
+        }
+        mosquitto_topic_matches_sub(MBMD_TOPIC_EXP, msg->topic, &match);
+        if (match) {
+            mb_exp_flag=1;
+            mb_exp = 10000 * atof(msg->payload);
+            if (trace) printf("mbmd export received %d\n", mb_exp);
+            break;
+        }
+
+    } while (0);
 
 }
 
@@ -240,8 +308,13 @@ void publish_power(struct mosquitto* mosq, char* topic, int power)
 
 
 // get timestamp from vzlogger EPOCH Secs * 1000 (ms) and ctr value in float
+//OLD: float kwh resolution 0.1 wh
 //vzlogger/data/chn0/agg 0 { "timestamp": 1636901760000, "value": 38118.691500000001 }
 //vzlogger/data/chn1/agg 0 { "timestamp": 1636901760000, "value": 42601.953500000003 }
+
+// NEW: values are in wh, *10 for 0,1 wh
+//vzlogger/data/chn0/agg { "timestamp": 1683731700000, "value": 3000 }
+//vzlogger/data/chn1/agg { "timestamp": 1683731700000, "value": 16000 }
 
 
 void get_time_stamp_cntr(char *buf, int64_t *time, int *cntr)
@@ -260,7 +333,8 @@ void get_time_stamp_cntr(char *buf, int64_t *time, int *cntr)
     if (pt != NULL) {
 
         pt+=strlen("\"value\":");
-        *cntr = (atof(pt) * 10000);  //convert to integer, 4 decimal places
+ //      *cntr = (atof(pt) * 10000);  //convert to integer, 4 decimal places
+         *cntr = (atof(pt) * 10);     //convert to integer, 0,1 wh
     }
     else {
         *cntr = -1;
@@ -268,7 +342,7 @@ void get_time_stamp_cntr(char *buf, int64_t *time, int *cntr)
 }
 
 
-void get_wr_values (char *sbfbuf, int *pvpower, int *pvetotal, double *uac, double *pvtemp, char *debugtime)
+void get_wr_values (char *sbfbuf, int *pvpower, int *pvetotal, double *uac, double *pvtemp, int *pvetoday, char *debugtime)
 {
     long filesize;
     char* pac;
@@ -285,7 +359,7 @@ void get_wr_values (char *sbfbuf, int *pvpower, int *pvetotal, double *uac, doub
         }
         pac = strstr(sbfbuf, "\"ETotal\":");
         if (pac) {
-            *pvetotal = 1000 * atof(pac+strlen("\"ETotal\":")); // convert to int wh
+            *pvetotal = 10000 * atof(pac+strlen("\"ETotal\":")); // convert to int 0.1 wh
         }
         else {
             printf("%s Warning, no pvetotal from SBFSpot\n",debugtime);
@@ -307,15 +381,23 @@ void get_wr_values (char *sbfbuf, int *pvpower, int *pvetotal, double *uac, doub
             printf("%s Warning, no Device Temperature from SBFSpot\n",debugtime);
             *pvtemp = 0.0;
         }
+        pac = strstr(sbfbuf, "\"EToday\":");
+        if (pac) {
+            *pvetoday = 10000 * atof(pac+strlen("\"EToday\":"));   // convert to int 0.1 wh
+        }
+        else {
+            printf("%s Warning, no pvetoday from SBFSpot\n",debugtime);
+            *pvetoday = 0;
+        }
     }
     else {
         printf("%s Warning, no output from SBFSpot\n",debugtime);
         *pvpower = 0;
         *pvetotal= 0;
+        *pvetoday=0;
         *pvtemp = 0.0;
         *uac=0;
     }
-    *pvetotal *= 10;     // units of other counter values are 0.1 wh
 }
 
 /**
@@ -349,8 +431,8 @@ int main(int argc, char **argv)
 
 	int64_t time1, time2;
 	double difftime;
-	int epower;
-	int vpower;
+//	int epower;
+//	int vpower;
 	// kwh * 10000
 	int vz1, vz2, ez1, ez2;
 
@@ -365,6 +447,7 @@ int main(int argc, char **argv)
 	char filename[80];
     int pvpower;
     int pvetotal;  //kwh * 10000
+    int pvetoday;
 
 
     int firstloop=1;
@@ -387,6 +470,10 @@ int main(int argc, char **argv)
                              // average conspower lowpass constsnt 0.1
     int conspower_filt = 0; // power in 0.1 W Integermath: conspower_filt * 10
     int conspower_raw = 0; // uncorrected conspower
+
+    char logtime[40];      // für Uhrzeit Vergleich für midnight log file HH:MM
+    char logdate[40];     //  dd.mm.yyyy fuer midnight log für excel liste
+    int midnight_flag = 0; // 0 erlaube logfile schreiben
 
 	// --- copy args
 	if (argc < 2) {
@@ -516,6 +603,10 @@ int main(int argc, char **argv)
                     time_info = localtime( &t );
 
                     strftime(debugtime, sizeof(debugtime), "%Y%m%d,%H:%M:%S", time_info);
+                    strftime(logtime, sizeof(logtime), "%H:%M", time_info);        // only HH:MM
+                    strftime(logdate, sizeof(logdate), "%d.%m.%Y", time_info); // only dd.mm.yyyy
+
+
                     if (verbose) printf("next ch0 and ch1 message received %s\n", debugtime);
                     memcpy(ch0_0_buf,ch0_buf,sizeof (ch0_0_buf));
                     memcpy(ch1_0_buf,ch1_buf,sizeof (ch1_0_buf));
@@ -534,7 +625,7 @@ int main(int argc, char **argv)
 
                     if (wr_flag) {  // sbfspot data over mqtt received
                         wr_flag = 0;
-                        get_wr_values (wr_buf, &pvpower, &pvetotal, &uac, &pvtemp, debugtime);
+                        get_wr_values (wr_buf, &pvpower, &pvetotal, &uac, &pvtemp, &pvetoday, debugtime);
                     }
                     else {
                         printf ("Warning, no wr data received, skip values %s\n", debugtime);
@@ -572,8 +663,73 @@ int main(int argc, char **argv)
                     }
 
                     // ------ calculate all powers -----------
-                    if (verbose) printf("kwh VZ %06.4f %06.4f EZ %06.4f %06.4f PV %06.4f\n",
-                        ((double)vz1) / 10000, ((double)vz2) / 10000, ((double)ez1) / 10000, ((double)ez2) / 10000, ((double)pvetotal)/10000);
+                    // ------ NOW: use the values of EM24 counter for vz1 and ez1 and gridpower
+                    // ------ no complicate filtering anymore (hopefully)
+
+                    if ( mb_pwr_flag == 0 || mb_imp_flag == 0 || mb_exp_flag == 0) {
+                        printf("%s Error, no values from EM24\n",debugtime);
+                        // exit (1);
+                    }
+
+                    vz1 = mb_imp;
+                    ez1 = mb_exp;
+                    gridpower = mb_pwr;
+
+
+// write to midnight logfile  float kwh
+// csv log:
+// Datum; Z1B(EM24_IMP-IOFF); Z1L(EM24_EXP-EOFF); Z2B; Z2L; Z3E=Z1L-Z2L+Z2B-Z1B; Z3L= Z1L-Z2L; Z3B=Z2B-Z1B; PV1Today; PV1Tot-PV1Off; PV2Today; PV2Tot-PV2Off; EM24_E; EM24_I;
+
+                   printf("%s\n", logtime);
+
+                   if ( (   strncmp(logtime,"23:46",5) == 0    // loesche flag um 23:46 oder 23:47
+                          || strncmp(logtime,"23:47",5) == 0 )
+                        && midnight_flag ==  1  )  {
+                         if (verbose) puts("Reset Midnight Flag\n");
+
+                         midnight_flag = 0;                   // logfile schreiben wieder freigegeben
+                    }
+
+                    if ( (   strncmp(logtime,"23:44",5) == 0    // schreibe log um 23:44 oder 23:45
+                          || strncmp(logtime,"23:45",5) == 0 )
+                          && midnight_flag == 0  )  {
+
+                         midnight_flag = 1;                   // aber nur einmal
+                        //  logtime
+                        float ioff=286.0;
+                        float eoff=77.9;
+                        float pv1off=67464.609;
+                        float pv2off=347.89;
+
+                        float z1b,z1l, z2b, z2l, z3e, z3l, z3b, pv1today, pv1tot, pv2today, pv2tot;
+                        if (verbose) puts("Write to Midnight Logfile\n");
+
+                        z1b = ((float)mb_imp)/10000.0-ioff;
+                        z1l = ((float)mb_exp)/10000.0-eoff;
+                        z2b = ((float)vz2)/10000.0;
+                        z2l = ((float)ez2)/10000.0;
+                        z3e = z1l-z2l + z2b-z1b;
+                        z3l = z1l-z2l;
+                        z3b = z2b-z1b;
+                        pv1today = ((float)pvetoday)/10000.0;
+                        pv1tot = ((float)pvetotal)/10000.0 - pv1off;
+                        pv2today = 1;  // TODO
+                        pv2tot = 348.89 - pv2off;  // TODO
+
+                        sprintf(outline,"%s;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f\n",
+                            logdate, z1b, z1l, z2b, z2l, z3e, z3l, z3b, pv1today,pv1tot,pv2today,pv2tot, z1b+ioff, z1l+eoff);
+
+
+                        if ((fp = fopen("/var/log/ehz_logger_v2/midnight.log", "a+")) == NULL) {
+                            printf("%s Error cant create or open Midnight Logfile\n", debugtime);
+                            exit(1);
+                        }
+                            fputs(outline, fp);
+                            fclose(fp);
+                    }
+
+                    if (verbose) printf("kwh EM24_B %06.4f EM24_L %06.4f Z2_B %06.4f Z2_L %06.4f PV %06.4f\n",
+                        ((double)vz1) / 10000, ((double)ez1) / 10000, ((double)vz2) / 10000, ((double)ez2) / 10000, ((double)pvetotal)/10000);
 
                     if (pvecount >= 2)
                         pvpower_avg  = ((apve[1]-apve[0])*360)/difftime;
@@ -581,9 +737,9 @@ int main(int argc, char **argv)
                         pvpower_avg  = pvpower;  // first runs
 
 
-                    vpower = (double)((vz2 - vz1) * 360) / difftime;
-                    epower = (double)((ez2 - ez1) * 360) / difftime;
-                    gridpower = vpower - epower;
+//                    vpower = (double)((vz2 - vz1) * 360) / difftime;
+//                    epower = (double)((ez2 - ez1) * 360) / difftime;
+//                    gridpower = vpower - epower;
 
 
 
@@ -611,7 +767,8 @@ int main(int argc, char **argv)
                     conspower = pvpower_corr + gridpower;
 
                    // publish qrid watts for evcc
-                    publish_power(mosq, EHZTOPIC_GRIDPWR, gridpower);
+//                    publish_power(mosq, EHZTOPIC_GRIDPWR, gridpower);
+
                    // publish pvpowercorr watts for evcc
                     publish_power(mosq, EHZTOPIC_PVPWR,  pvpower_corr);
 
@@ -648,8 +805,8 @@ int main(int argc, char **argv)
                     }
                     // Werte für Mittelwertkorrektur speichern (alles integer)
                     apvpower[0]=apvpower[1]; apvpower[1]=apvpower[2]; apvpower[2]=pvpower;
-                    aepower[0]=aepower[1]; aepower[1]=aepower[2]; aepower[2]=epower;
-                    avpower[0]=avpower[1]; avpower[1]=avpower[2]; avpower[2]=vpower;
+ //                   aepower[0]=aepower[1]; aepower[1]=aepower[2]; aepower[2]=epower;
+ //                   avpower[0]=avpower[1]; avpower[1]=avpower[2]; avpower[2]=vpower;
 
                     // Gesamtzaehlerstand Verbrauch (unit Wh):
                     //PVZaehler-Einspeisezaehler+Bezugszaehler
@@ -659,10 +816,10 @@ int main(int argc, char **argv)
                     // damit der initiale Wert vz2 (virtueller Differenz Zaehler) ist
 
                     if (firstloop) {
-                        conscounterprev = pvetotal - ez2 + vz2;
+                        conscounterprev = pvetotal - ez1 + vz1;
                         firstloop = 0;
                     }
-                    conscounter = pvetotal - ez2 + vz2;
+                    conscounter = pvetotal - ez1 + vz1;
                     if (conscounter < conscounterprev)
                     {
                        printf("%s Warning: neg. conscounter, correction\n",debugtime);
@@ -670,13 +827,13 @@ int main(int argc, char **argv)
                     }
                     conscounterprev=conscounter;
 
-                    if (verbose) printf("vpower epower pvpower pvetotal %06d %06d %06d %06d\n", vpower, epower, pvpower, pvetotal);
+                    if (verbose) printf("gridpower pvpower pvetotal %06d %06d %06d\n", gridpower, pvpower, pvetotal);
                     if (verbose) printf("conspower conscounter %08d %08d\n",conspower,conscounter/10);
 
                     // ---- copy values for next loop
                     time1=time2;
-                    ez1=ez2;
-                    vz1=vz2;
+//                    ez1=ez2;
+//                    vz1=vz2;
                     // read timedate
                     time(&t);
                     time_info = localtime( &t );
@@ -688,18 +845,18 @@ int main(int argc, char **argv)
                     // format for logfile, optimize fields for curl for delayed or repeated upload if necessary
 
                     sprintf(outline,"%s,%d,%d,%d,%d;%d,%d,%d,%d\n",
-                        str,(int)pvetotal/10,(int)pvpower,conscounter/10, conspower,vz2,ez2,vpower,epower);
+                        str,(int)pvetotal/10,(int)pvpower,conscounter/10, conspower,vz1,ez1,gridpower,gridpower);
 
                     if (verbose) puts(outline);
 
 
                     // rough sanity check of values:
                     int invalid = 0;
-                    if (    pvpower > 10000 || pvpower < 0
+                    if (    pvpower > 15000  || pvpower < 0
                         || conspower > 50000 || conspower < 0
-                        || vpower > 50000 || vpower < 0
-                        || epower > 10000 || epower < 0 ) {
+                        || gridpower > 50000 || gridpower < -50000) {
                             printf ("%s Warning skip out of range values, no storage \n",debugtime);
+                            printf ("pvetotal/10,pvpower,conscounter/10, conspower,vz1,ez1,gridpower,gridpower\n");
                             printf ("%s Warning %s",debugtime, outline);
                             invalid = 1;
                     }
