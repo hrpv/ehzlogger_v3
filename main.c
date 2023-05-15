@@ -15,6 +15,12 @@
 // damit die PV Leistung ungefähr passt wird temporär einfach die SMA WR Leistung für die Rechnung verdoppelt, damit nicht immer
 // negative Hausverbrauchswerte rauskommen, beim Plausi-Check
 
+// 15.02.2032:
+// Hoymiles WR dazu pv2_xxx
+// solar/ac/power 39.0          W  -> int pv2_power
+// solar/ac/yieldtotal 439.916  Kwh -> x10000 für 0.1 wh  int pv2_etotal
+// solar/ac/yieldday 23253      Wh  -> x10 für 0.1 wh     int pv2_today
+// solar/ac/is_valid 1                                    int pv2_valid
 
 // die Werte für Einspeisung und Verbrauch und aktuelle Leistung werden künftig von
 // von dem EM24 Ethernet Zähler geliefert
@@ -115,10 +121,18 @@
 #define MBMD_TOPIC_IMP "mbmd/cgex3x02-1/Import"    // float Bezug in kwh
 #define MBMD_TOPIC_EXP "mbmd/cgex3x02-1/Export"    // float Lieferung in kwh
 
+#define HMS_TOPIC_PWR "solar/ac/power"             // float W  -> int pv2_power
+#define HMS_TOPIC_TOT "solar/ac/yieldtotal"        // float Kwh -> x10000 für 0.1 wh  int pv2_etotal
+#define HMS_TOPIC_DAY "solar/ac/yieldday"          // float Wh  -> x10 für 0.1 wh     int pv2_today
+#define HMS_TOPIC_FLG "solar/ac/is_valid"          // int flag                          int pv2_valid
+
+
+
 #define MINCONS 100    //minimum 100W Power consumption
 
 
-static char *ptopics[] = {MQTT_TOPIC_CHN0,MQTT_TOPIC_CHN1,MQTT_TOPIC_WR,MBMD_TOPIC_PWR,MBMD_TOPIC_IMP,MBMD_TOPIC_EXP};
+static char *ptopics[] = {MQTT_TOPIC_CHN0,MQTT_TOPIC_CHN1,MQTT_TOPIC_WR,MBMD_TOPIC_PWR,
+    MBMD_TOPIC_IMP,MBMD_TOPIC_EXP,HMS_TOPIC_PWR,HMS_TOPIC_TOT,HMS_TOPIC_DAY,HMS_TOPIC_FLG};
 // static int numtopics=3;
 
 static volatile int run = 1;       // to check if volatile is really needed
@@ -139,6 +153,12 @@ static char ch1_buf[512];
 static volatile int mb_pwr=0;  // int power in watt
 static volatile int mb_imp=0;  // int import energy in 0.1 wh
 static volatile int mb_exp=0;  // int export energy in 0.1 wh
+
+static volatile int pv2_power=0;   // pv2 power in watt
+static volatile int pv2_etotal=0;  // pv2 total energy in 0.1 wh
+static volatile int pv2_etoday=0;  // pv2 today energy in 0.1 wh
+static volatile int pv2_flag=0;    // pv2 ac valid flag
+
 
 
 // signal handler for for CTL C and terminate process
@@ -186,9 +206,16 @@ void on_connect(struct mosquitto *mosq, void *obj, int reason_code)
     rc= mosquitto_subscribe(mosq,NULL,ptopics[0],1);
     rc+=mosquitto_subscribe(mosq,NULL,ptopics[1],1);
     rc+=mosquitto_subscribe(mosq,NULL,ptopics[2],1);
+
     rc+=mosquitto_subscribe(mosq,NULL,ptopics[3],1);
     rc+=mosquitto_subscribe(mosq,NULL,ptopics[4],1);
     rc+=mosquitto_subscribe(mosq,NULL,ptopics[5],1);
+
+    rc+=mosquitto_subscribe(mosq,NULL,ptopics[6],1);
+    rc+=mosquitto_subscribe(mosq,NULL,ptopics[7],1);
+    rc+=mosquitto_subscribe(mosq,NULL,ptopics[8],1);
+    rc+=mosquitto_subscribe(mosq,NULL,ptopics[9],1);
+
 
 	if(rc != MOSQ_ERR_SUCCESS){
 		fprintf(stderr, "Error subscribing: %s\n", mosquitto_strerror(rc));
@@ -271,6 +298,32 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
             if (trace) printf("mbmd export received %d\n", mb_exp);
             break;
         }
+
+        mosquitto_topic_matches_sub(HMS_TOPIC_PWR, msg->topic, &match);
+        if (match) {
+            pv2_power = atof(msg->payload);
+            if (trace) printf("pv2 power received %d\n", pv2_power);
+            break;
+        }
+        mosquitto_topic_matches_sub(HMS_TOPIC_TOT, msg->topic, &match);
+        if (match) {
+            pv2_etotal = 10000 * atof(msg->payload);
+            if (trace) printf("pv2 etotal received %d\n", pv2_etotal);
+            break;
+        }
+        mosquitto_topic_matches_sub(HMS_TOPIC_DAY, msg->topic, &match);
+        if (match) {
+            pv2_etoday = 10 * atof(msg->payload);
+            if (trace) printf("pv2 etoday received %d\n", pv2_etoday);
+            break;
+        }
+        mosquitto_topic_matches_sub(HMS_TOPIC_FLG, msg->topic, &match);
+        if (match) {
+            pv2_flag = atoi(msg->payload);
+            if (trace) printf("pv2 ac valid received %d\n", pv2_flag);
+            break;
+        }
+
 
     } while (0);
 
@@ -475,6 +528,9 @@ int main(int argc, char **argv)
     char logdate[40];     //  dd.mm.yyyy fuer midnight log für excel liste
     int midnight_flag = 0; // 0 erlaube logfile schreiben
 
+    int pv2_etotal_sav = 0;  // PV2 Save Counters falls neue Werte kleiner als alte Werte sind
+    int pv2_etoday_sav = 0;   // OpenDTU Bug bei Sonnenuntergang
+
 	// --- copy args
 	if (argc < 2) {
         printf ("Usage: ehz_logger_v3 --%s;%s-- logfile [verbose|trace]\n", __DATE__, __TIME__);
@@ -675,12 +731,27 @@ int main(int argc, char **argv)
                     ez1 = mb_exp;
                     gridpower = mb_pwr;
 
+// specialhandling für HMS PV2:
+// die Werte etotal und etoday können in Bereich Sonnenuntergang falsch sein
+// Bug in OpenDTU Lösung noch offen, workaround:
+                    if (pv2_flag > 0 && (pv2_etotal_sav < pv2_etotal)) {
+                        pv2_etotal_sav = pv2_etotal; // save only if new value is greater
+                    }
+                    if (pv2_flag > 0 && (pv2_etoday_sav < pv2_etoday)) {
+                        pv2_etoday_sav = pv2_etoday; // save only if new value is greater
+
+                    }   // reset today flags at midnight
+
+
+
+
+
 
 // write to midnight logfile  float kwh
 // csv log:
 // Datum; Z1B(EM24_IMP-IOFF); Z1L(EM24_EXP-EOFF); Z2B; Z2L; Z3E=Z1L-Z2L+Z2B-Z1B; Z3L= Z1L-Z2L; Z3B=Z2B-Z1B; PV1Today; PV1Tot-PV1Off; PV2Today; PV2Tot-PV2Off; EM24_E; EM24_I;
 
-                   printf("%s\n", logtime);
+//                   printf("%s\n", logtime);
 
                    if ( (   strncmp(logtime,"23:46",5) == 0    // loesche flag um 23:46 oder 23:47
                           || strncmp(logtime,"23:47",5) == 0 )
@@ -688,6 +759,8 @@ int main(int argc, char **argv)
                          if (verbose) puts("Reset Midnight Flag\n");
 
                          midnight_flag = 0;                   // logfile schreiben wieder freigegeben
+                         pv2_etoday_sav = 0;                  // reset today counters at midnight
+                         pv2_etoday = 0;
                     }
 
                     if ( (   strncmp(logtime,"23:44",5) == 0    // schreibe log um 23:44 oder 23:45
@@ -713,8 +786,8 @@ int main(int argc, char **argv)
                         z3b = z2b-z1b;
                         pv1today = ((float)pvetoday)/10000.0;
                         pv1tot = ((float)pvetotal)/10000.0 - pv1off;
-                        pv2today = 1;  // TODO
-                        pv2tot = 348.89 - pv2off;  // TODO
+                        pv2today = ((float)pv2_etoday_sav)/10000.0;
+                        pv2tot = ((float)pv2_etotal_sav)/10000.0 - pv2off;
 
                         sprintf(outline,"%s;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f;%8.1f\n",
                             logdate, z1b, z1l, z2b, z2l, z3e, z3l, z3b, pv1today,pv1tot,pv2today,pv2tot, z1b+ioff, z1l+eoff);
@@ -815,11 +888,19 @@ int main(int argc, char **argv)
                     // beim ersten durchlauf könnte ein initialer offset gesetzt werden
                     // damit der initiale Wert vz2 (virtueller Differenz Zaehler) ist
 
+                    // bug fix nach zaehlerwechsel an 09.05.23
+                    // Sprung von 714646090 nach 804646090 und dann wieder kleiner geht nicht also muss ne korrektur drauf addiert werden
+                    // drauf addiert werden: 127798050
+
+
+
                     if (firstloop) {
                         conscounterprev = pvetotal - ez1 + vz1;
                         firstloop = 0;
                     }
                     conscounter = pvetotal - ez1 + vz1;
+
+
                     if (conscounter < conscounterprev)
                     {
                        printf("%s Warning: neg. conscounter, correction\n",debugtime);
