@@ -15,6 +15,9 @@ int verbose = 0;
 //global trace flag
 int trace = 0;
 
+//global debug flag
+int dbgflag = 0;
+
 // global debugtime
 char debugtime[40];
 

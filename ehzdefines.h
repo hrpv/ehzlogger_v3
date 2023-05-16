@@ -16,6 +16,7 @@
     extern int  kbhit(void);
     extern int verbose;
     extern int trace;
+    extern int dbgflag;
     extern char debugtime[40];
 
 

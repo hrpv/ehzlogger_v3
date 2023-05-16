@@ -253,26 +253,26 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
 {
 	bool match = false;
 	/* This blindly prints the payload, but the payload can be anything so take care. */
-    if (trace) printf("%s %d %s\n", msg->topic, msg->qos, (char *)msg->payload);
+    if (dbgflag) printf("%s %d %s\n", msg->topic, msg->qos, (char *)msg->payload);
 
     do {
         mosquitto_topic_matches_sub(MQTT_TOPIC_CHN0, msg->topic, &match);
         if (match) {
-            if (verbose) printf("chan0 received \n");
+            if (dbgflag) printf("chan0 received \n");
             chan0_flag=1;
             strncpy(ch0_buf,msg->payload, sizeof(ch0_buf)-1);
             break;
         }
         mosquitto_topic_matches_sub(MQTT_TOPIC_CHN1, msg->topic, &match);
         if (match) {
-            if (verbose) printf("chan1 received \n");
+            if (dbgflag) printf("chan1 received \n");
             chan1_flag=1;
             strncpy(ch1_buf,msg->payload, sizeof(ch1_buf)-1);
             break;
         }
         mosquitto_topic_matches_sub(MQTT_TOPIC_WR, msg->topic, &match);
         if (match) {
-            if (verbose) printf("wr received \n");
+            if (dbgflag) printf("wr received \n");
             wr_flag=1;
             strncpy(wr_buf,msg->payload, sizeof(wr_buf)-1);
             break;
@@ -281,46 +281,46 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
         if (match) {
             mb_pwr_flag=1;
             mb_pwr = atof(msg->payload);
-            if (trace) printf("mbmd gridpwr received %d\n",mb_pwr);
+            if (dbgflag) printf("mbmd gridpwr received %d\n",mb_pwr);
             break;
         }
         mosquitto_topic_matches_sub(MBMD_TOPIC_IMP, msg->topic, &match);
         if (match) {
             mb_imp_flag=1;
             mb_imp = 10000 * atof(msg->payload);
-            if (trace) printf("mbmd import received %d\n", mb_imp);
+            if (dbgflag) printf("mbmd import received %d\n", mb_imp);
             break;
         }
         mosquitto_topic_matches_sub(MBMD_TOPIC_EXP, msg->topic, &match);
         if (match) {
             mb_exp_flag=1;
             mb_exp = 10000 * atof(msg->payload);
-            if (trace) printf("mbmd export received %d\n", mb_exp);
+            if (dbgflag) printf("mbmd export received %d\n", mb_exp);
             break;
         }
 
         mosquitto_topic_matches_sub(HMS_TOPIC_PWR, msg->topic, &match);
         if (match) {
             pv2_power = atof(msg->payload);
-            if (trace) printf("pv2 power received %d\n", pv2_power);
+            if (dbgflag) printf("pv2 power received %d\n", pv2_power);
             break;
         }
         mosquitto_topic_matches_sub(HMS_TOPIC_TOT, msg->topic, &match);
         if (match) {
             pv2_etotal = 10000 * atof(msg->payload);
-            if (trace) printf("pv2 etotal received %d\n", pv2_etotal);
+            if (dbgflag) printf("pv2 etotal received %d\n", pv2_etotal);
             break;
         }
         mosquitto_topic_matches_sub(HMS_TOPIC_DAY, msg->topic, &match);
         if (match) {
             pv2_etoday = 10 * atof(msg->payload);
-            if (trace) printf("pv2 etoday received %d\n", pv2_etoday);
+            if (dbgflag) printf("pv2 etoday received %d\n", pv2_etoday);
             break;
         }
         mosquitto_topic_matches_sub(HMS_TOPIC_FLG, msg->topic, &match);
         if (match) {
             pv2_flag = atoi(msg->payload);
-            if (trace) printf("pv2 ac valid received %d\n", pv2_flag);
+            if (dbgflag) printf("pv2 ac valid received %d\n", pv2_flag);
             break;
         }
 
@@ -530,10 +530,12 @@ int main(int argc, char **argv)
 
     int pv2_etotal_sav = 0;  // PV2 Save Counters falls neue Werte kleiner als alte Werte sind
     int pv2_etoday_sav = 0;   // OpenDTU Bug bei Sonnenuntergang
+    int pvetotal_sum = 0;     // etotal von PV1 und PV2
+    int pvpower_sum = 0;      // sum of pvpower and pv2_power;
 
 	// --- copy args
 	if (argc < 2) {
-        printf ("Usage: ehz_logger_v3 --%s;%s-- logfile [verbose|trace]\n", __DATE__, __TIME__);
+        printf ("Usage: ehz_logger_v3 --%s;%s-- logfile [verbose|trace|debug]\n", __DATE__, __TIME__);
         exit(1);
 	}
 	strcpy(filename, argv[1]);
@@ -545,6 +547,11 @@ int main(int argc, char **argv)
         if (!strncasecmp(argv[2], "t", 1))  {
             verbose = 1;
             trace = 1;
+        }
+        if (!strncasecmp(argv[2], "d", 1))  {
+            verbose = 1;
+            trace = 1;
+            dbgflag = 1;
         }
 	}
 
@@ -692,28 +699,43 @@ int main(int argc, char **argv)
                     }
                     sbfstarted=0;  // activate sbfspot call again
 
-                    if (pvetotal > 0) {   // store pvetotal as backup in case of pvetotal error
+// specialhandling für HMS PV2:
+// die Werte etotal und etoday können in Bereich Sonnenuntergang falsch sein
+// Bug in OpenDTU Lösung noch offen, workaround:
+                    if (pv2_flag > 0 && (pv2_etotal_sav < pv2_etotal)) {
+                        pv2_etotal_sav = pv2_etotal; // save only if new value is greater
+                    }
+                    if (pv2_flag > 0 && (pv2_etoday_sav < pv2_etoday)) {
+                        pv2_etoday_sav = pv2_etoday; // save only if new value is greater
+
+                    }   // reset today flags at midnight
+                    if (pv2_etotal_sav == 0) {
+                       printf("%s Warning, no pv2_etotal from HMS_WR",debugtime);
+                    }
+
+                    pvetotal_sum = pvetotal + pv2_etotal_sav; // PV1 + PV2
+                    if (pvetotal > 0 &&  pv2_etotal_sav > 0) {   // store pvetotal as backup in case of pvetotal error
                         apve[0] = apve[1];
-                        apve[1] = pvetotal;
+                        apve[1] = pvetotal_sum;
                         if (pvecount < 2) {
                             pvecount++;
-                            if (verbose) printf("collect pvetotal last values\n");
+                            if (verbose) printf("collect pvetotal pv2_etotal last values\n");
                          }
                     }
-                    else { // if pvetotal= 0
+                    else { // if pvetotal= 0 || pv2_etotal_sav == 0
                         if (pvecount >= 2) {
                             int pvewatts = ((apve[1]-apve[0])*360)/difftime;
                             pvpower_avg = pvewatts;
-                            if (pvewatts >= 0 && pvewatts <= 20000) {   // in range
-                                pvetotal= apve[1];  // use last value
-                                printf("%s Warning, no pvetotal from SBFSpot, use last value\n",debugtime);
+                            if (pvewatts >= 0 && pvewatts <= 30000) {   // in range
+                                pvetotal_sum= apve[1];  // use last value
+                                printf("%s Warning, no pvetotal from SBFSpot or pv2_etotal, use last value\n",debugtime);
                             }
                             else {
                                 pvpower_avg = 0;
                                 pvecount = 0;  // invalid backup, set counter to zero
                                 apve[0] = 0;
                                 apve[1] = 0;
-                                printf("%s Warning, no pvetotal from SBFSpot, pvetotal set zero\n",debugtime);
+                                printf("%s Warning, no pvetotal from SBFSpot or pv2_etotal, pvetotal_sum set zero\n",debugtime);
                              }
                         }
                     }
@@ -729,21 +751,9 @@ int main(int argc, char **argv)
 
                     vz1 = mb_imp;
                     ez1 = mb_exp;
+                    vz2 = mb_imp;
+                    ez2 = mb_exp;
                     gridpower = mb_pwr;
-
-// specialhandling für HMS PV2:
-// die Werte etotal und etoday können in Bereich Sonnenuntergang falsch sein
-// Bug in OpenDTU Lösung noch offen, workaround:
-                    if (pv2_flag > 0 && (pv2_etotal_sav < pv2_etotal)) {
-                        pv2_etotal_sav = pv2_etotal; // save only if new value is greater
-                    }
-                    if (pv2_flag > 0 && (pv2_etoday_sav < pv2_etoday)) {
-                        pv2_etoday_sav = pv2_etoday; // save only if new value is greater
-
-                    }   // reset today flags at midnight
-
-
-
 
 
 
@@ -769,7 +779,7 @@ int main(int argc, char **argv)
 
                          midnight_flag = 1;                   // aber nur einmal
                         //  logtime
-                        float ioff=286.0;
+                        float ioff=286.0;                    // offser ab 09.05.2023 MK7.1 mod
                         float eoff=77.9;
                         float pv1off=67464.609;
                         float pv2off=347.89;
@@ -801,13 +811,16 @@ int main(int argc, char **argv)
                             fclose(fp);
                     }
 
-                    if (verbose) printf("kwh EM24_B %06.4f EM24_L %06.4f Z2_B %06.4f Z2_L %06.4f PV %06.4f\n",
-                        ((double)vz1) / 10000, ((double)ez1) / 10000, ((double)vz2) / 10000, ((double)ez2) / 10000, ((double)pvetotal)/10000);
+                    if (verbose) printf("kwh EM24_B %06.4f EM24_L %06.4f Z2_B %06.4f Z2_L %06.4f PV %06.4f PV2 %06.4f\n",
+                        ((double)vz1) / 10000, ((double)ez1) / 10000, ((double)vz2) / 10000, ((double)ez2) / 10000, ((double)pvetotal)/10000, ((double)pv2_etotal_sav)/10000);
+
+
+                    pvpower_sum = pvpower+pv2_power; // add PV1 and PV2
 
                     if (pvecount >= 2)
                         pvpower_avg  = ((apve[1]-apve[0])*360)/difftime;
                     else
-                        pvpower_avg  = pvpower;  // first runs
+                        pvpower_avg  =  pvpower_sum; // first runs
 
 
 //                    vpower = (double)((vz2 - vz1) * 360) / difftime;
@@ -856,11 +869,11 @@ int main(int argc, char **argv)
                         if (fileheader) {
                             fileheader = 0;
                              sprintf(outline,"%s\n",
-                             "time,pvetotal,pvpower,vz2,ez2,gridpower,conspower,conspower_raw,conspower_filt,pvpower_avg,pvpower_corr");
+                             "time,pvetotal,pvpower,pv2_etotal_sav,pv2_power,vz2,ez2,gridpower,conspower,conspower_raw,conspower_filt,pvpower_avg,pvpower_corr");
                         }
                         else {
-                            sprintf(outline,"%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
-                              str,pvetotal,pvpower,vz2,ez2,gridpower,conspower,conspower_raw,conspower_filt/10,pvpower_avg,pvpower_corr);
+                            sprintf(outline,"%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+                              str,pvetotal,pvpower,pv2_etotal_sav,pv2_power,vz2,ez2,gridpower,conspower,conspower_raw,conspower_filt/10,pvpower_avg,pvpower_corr);
                         }
 
                         if ((fpm = fopen("/var/log/ehz_logger_v2/minute.log", "a+")) == NULL) {
@@ -878,8 +891,7 @@ int main(int argc, char **argv)
                     }
                     // Werte für Mittelwertkorrektur speichern (alles integer)
                     apvpower[0]=apvpower[1]; apvpower[1]=apvpower[2]; apvpower[2]=pvpower;
- //                   aepower[0]=aepower[1]; aepower[1]=aepower[2]; aepower[2]=epower;
- //                   avpower[0]=avpower[1]; avpower[1]=avpower[2]; avpower[2]=vpower;
+;
 
                     // Gesamtzaehlerstand Verbrauch (unit Wh):
                     //PVZaehler-Einspeisezaehler+Bezugszaehler
@@ -888,17 +900,14 @@ int main(int argc, char **argv)
                     // beim ersten durchlauf könnte ein initialer offset gesetzt werden
                     // damit der initiale Wert vz2 (virtueller Differenz Zaehler) ist
 
-                    // bug fix nach zaehlerwechsel an 09.05.23
-                    // Sprung von 714646090 nach 804646090 und dann wieder kleiner geht nicht also muss ne korrektur drauf addiert werden
-                    // drauf addiert werden: 127798050
 
 
 
                     if (firstloop) {
-                        conscounterprev = pvetotal - ez1 + vz1;
+                        conscounterprev = pvetotal_sum - ez1 + vz1;
                         firstloop = 0;
                     }
-                    conscounter = pvetotal - ez1 + vz1;
+                    conscounter = pvetotal_sum - ez1 + vz1;
 
 
                     if (conscounter < conscounterprev)
@@ -908,8 +917,12 @@ int main(int argc, char **argv)
                     }
                     conscounterprev=conscounter;
 
-                    if (verbose) printf("gridpower pvpower pvetotal %06d %06d %06d\n", gridpower, pvpower, pvetotal);
-                    if (verbose) printf("conspower conscounter %08d %08d\n",conspower,conscounter/10);
+                    if (verbose)
+                        printf("gridpower pvpower_sum pvetotal pvpower pv2_etotal pv2_power conspower conscounter\n");
+
+                    if (verbose)
+                        printf("%8d %8d %8d %8d %8d %8d %8d %8d\n",
+                            gridpower,pvpower_sum,pvetotal,pvpower,pv2_etotal_sav,pv2_power,conspower,conscounter/10);
 
                     // ---- copy values for next loop
                     time1=time2;
@@ -925,8 +938,8 @@ int main(int argc, char **argv)
 
                     // format for logfile, optimize fields for curl for delayed or repeated upload if necessary
 
-                    sprintf(outline,"%s,%d,%d,%d,%d;%d,%d,%d,%d\n",
-                        str,(int)pvetotal/10,(int)pvpower,conscounter/10, conspower,vz1,ez1,gridpower,gridpower);
+                    sprintf(outline,"%s,%d,%d,%d,%d;%d,%d,%d,%d %d\n",
+                        str,(int)pvetotal_sum/10,(int)pvpower_sum,conscounter/10, conspower,vz1,ez1,gridpower,pvpower, pv2_power);
 
                     if (verbose) puts(outline);
 
@@ -956,7 +969,7 @@ int main(int argc, char **argv)
 
                         // send curl string for pvoutput.org
 
-                        send_data (time_info,pvetotal/10, pvpower,conscounter/10 , conspower, uac, pvtemp);
+                        send_data (time_info,pvetotal_sum/10, pvpower_sum,conscounter/10 , conspower, uac, pvtemp);
 
                     }
                 }  // chan0_flag && chan1_flag
