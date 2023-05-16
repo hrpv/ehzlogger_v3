@@ -842,7 +842,7 @@ int main(int argc, char **argv)
 
 //                  correction of pvpower to avoid negative consumption
                     pvpower_corr = 0;
-                    if (pvpower > 0) {
+                    if (pvpower_sum > 0) {
                         if (pvpower_avg  + gridpower <  MINCONS) {  // Verbrauch < MINCONS (MINCONS=100 W)
                             pvpower_corr = -gridpower + max(MINCONS, conspower_filt/10);   // Korrektur verschönern, mind. Verbrauch 100W oder letzter Mittelwert
                             printf ("Warning, corrected pvpower: %s old: %d new: %d \n", debugtime,pvpower_avg,pvpower_corr);
