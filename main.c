@@ -937,21 +937,25 @@ int main(int argc, char **argv)
                     strftime(debugtime, sizeof(str), "%Y%m%d,%H:%M:%S", time_info);
 
                     // format for logfile, optimize fields for curl for delayed or repeated upload if necessary
+                    if (verbose)
+                        printf ("date,pvetotal_sum/10,pvpower_sum,conscounter/10,conspower,vz1,ez1,gridpowe,pvpower,pvetoday/10,pv2_power,pv2_etoday_sav/10\n");
 
-                    sprintf(outline,"%s,%d,%d,%d,%d;%d,%d,%d,%d %d\n",
-                        str,(int)pvetotal_sum/10,(int)pvpower_sum,conscounter/10, conspower,vz1,ez1,gridpower,pvpower, pv2_power);
 
-                    if (verbose) puts(outline);
+                    sprintf(outline,"%s,%d,%d,%d,%d;%d,%d,%d,%d %d %d %d\n",
+                       str,(int)pvetotal_sum/10,(int)pvpower_sum,conscounter/10, conspower,vz1,ez1,gridpower,pvpower,pvetoday/10, pv2_power,pv2_etoday_sav/10);
+
+                    if (verbose)
+                        puts(outline);
 
 
                     // rough sanity check of values:
                     int invalid = 0;
-                    if (    pvpower > 15000  || pvpower < 0
+                    if (    pvpower_sum > 20000  || pvpower_sum < 0
                         || conspower > 50000 || conspower < 0
                         || gridpower > 50000 || gridpower < -50000) {
                             printf ("%s Warning skip out of range values, no storage \n",debugtime);
-                            printf ("pvetotal/10,pvpower,conscounter/10, conspower,vz1,ez1,gridpower,gridpower\n");
-                            printf ("%s Warning %s",debugtime, outline);
+                            printf ("date,pvetotal_sum/10,pvpower_sum,conscounter/10,conspower,vz1,ez1,gridpowe,pvpower,pvetoday/10,pv2_power,pv2_etoday_sav/10\n");
+                            puts(outline);
                             invalid = 1;
                     }
                     timecntr++;
@@ -969,7 +973,9 @@ int main(int argc, char **argv)
 
                         // send curl string for pvoutput.org
 
-                        send_data (time_info,pvetotal_sum/10, pvpower_sum,conscounter/10 , conspower, uac, pvtemp);
+//                        send_data (time_info,pvetotal_sum/10, pvpower_sum,conscounter/10 , conspower, uac, pvtemp);
+// send 4 extended data, donation required
+                        send_data (time_info,pvetotal_sum/10, pvpower_sum,conscounter/10 , conspower, uac, pvtemp,pvpower,pvetoday/10,pv2_power,pv2_etoday_sav/10 );
 
                     }
                 }  // chan0_flag && chan1_flag

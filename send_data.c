@@ -54,8 +54,8 @@ curl -d "data=yyyymmdd,hh:mm,pvetotal,pvpower,conscounter,conspower" -H "X-Pvout
 */
 #include "ehzdefines.h"
 #include "pvoutkeys.h"
-
-int send_data (struct tm *time_info,int pvetotal, int pvpower, int conscounter, int conspower, double uac, double pvtemp)
+int send_data (struct tm *time_info,int pvetotal, int pvpower, int conscounter, int conspower, double uac, double pvtemp, int pv1power,int pvetoday, int pv2_power, int pv2_etoday)
+//int send_data (struct tm *time_info,int pvetotal, int pvpower, int conscounter, int conspower, double uac, double pvtemp)
 {
     char curlstr[2500];
     char cmdstring[2600];
@@ -138,8 +138,11 @@ int send_data (struct tm *time_info,int pvetotal, int pvpower, int conscounter, 
 
     strftime(str, sizeof(str), "%Y%m%d,%H:%M", time_info);
     if (uac > 100.0 && uac < 400.0 && pvtemp > 5.0 && pvtemp < 180.0) {  // add uac and temp if in range
-        sprintf(curlstr,"/usr/bin/curl -i -d \"data=%s,%d,%d,%d,%d,%3.1f,%3.1f\" -d \"c1=1\" -H \"X-Pvoutput-Apikey: %s\" -H \"X-Pvoutput-SystemId: %s\" https://pvoutput.org/service/r2/addbatchstatus.jsp",
-                str,pvetotal,pvpower,conscounter,conspower,pvtemp,uac, APIKEY,SYSTEMID);
+        sprintf(curlstr,"/usr/bin/curl -i -d \"data=%s,%d,%d,%d,%d,%3.1f,%3.1f,%d,%3.1f,%d,%3.1f\" -d \"c1=1\" -H \"X-Pvoutput-Apikey: %s\" -H \"X-Pvoutput-SystemId: %s\" https://pvoutput.org/service/r2/addbatchstatus.jsp",
+                str,pvetotal,pvpower,conscounter,conspower,pvtemp,uac,pv1power,(float)pvetoday/1000.0,pv2_power,(float)pv2_etoday/1000.0, APIKEY,SYSTEMID);
+
+ //       sprintf(curlstr,"/usr/bin/curl -i -d \"data=%s,%d,%d,%d,%d,%3.1f,%3.1f\" -d \"c1=1\" -H \"X-Pvoutput-Apikey: %s\" -H \"X-Pvoutput-SystemId: %s\" https://pvoutput.org/service/r2/addbatchstatus.jsp",
+ //               str,pvetotal,pvpower,conscounter,conspower,pvtemp,uac, APIKEY,SYSTEMID);
     }
     else {
         sprintf(curlstr,"/usr/bin/curl -i -d \"data=%s,%d,%d,%d,%d\" -d \"c1=1\" -H \"X-Pvoutput-Apikey: %s\" -H \"X-Pvoutput-SystemId: %s\" https://pvoutput.org/service/r2/addbatchstatus.jsp",
