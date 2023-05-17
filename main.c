@@ -751,8 +751,6 @@ int main(int argc, char **argv)
 
                     vz1 = mb_imp;
                     ez1 = mb_exp;
-                    vz2 = mb_imp;
-                    ez2 = mb_exp;
                     gridpower = mb_pwr;
 
 
@@ -776,7 +774,6 @@ int main(int argc, char **argv)
                     if ( (   strncmp(logtime,"23:44",5) == 0    // schreibe log um 23:44 oder 23:45
                           || strncmp(logtime,"23:45",5) == 0 )
                           && midnight_flag == 0  )  {
-
                          midnight_flag = 1;                   // aber nur einmal
                         //  logtime
                         float ioff=286.0;                    // offser ab 09.05.2023 MK7.1 mod
@@ -938,11 +935,11 @@ int main(int argc, char **argv)
 
                     // format for logfile, optimize fields for curl for delayed or repeated upload if necessary
                     if (verbose)
-                        printf ("date,pvetotal_sum/10,pvpower_sum,conscounter/10,conspower,vz1,ez1,gridpowe,pvpower,pvetoday/10,pv2_power,pv2_etoday_sav/10\n");
+                        printf ("date,pvetotal_sum/10,pvpower_sum,conscounter/10,conspower,vz1,ez1,gridpower,pvpower,pvetoday/10,pv2_power,pv2_etoday_sav/10,vz2,ez2\n");
 
 
-                    sprintf(outline,"%s,%d,%d,%d,%d;%d,%d,%d,%d %d %d %d\n",
-                       str,(int)pvetotal_sum/10,(int)pvpower_sum,conscounter/10, conspower,vz1,ez1,gridpower,pvpower,pvetoday/10, pv2_power,pv2_etoday_sav/10);
+                    sprintf(outline,"%s,%d,%d,%d,%d;%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+                       str,(int)pvetotal_sum/10,(int)pvpower_sum,conscounter/10, conspower,vz1,ez1,gridpower,pvpower,pvetoday/10, pv2_power,pv2_etoday_sav/10,vz2,ez2);
 
                     if (verbose)
                         puts(outline);
@@ -954,6 +951,8 @@ int main(int argc, char **argv)
                         || conspower > 50000 || conspower < 0
                         || gridpower > 50000 || gridpower < -50000) {
                             printf ("%s Warning skip out of range values, no storage \n",debugtime);
+                            printf ("date,pvetotal_sum/10,pvpower_sum,conscounter/10,conspower,vz1,ez1,gridpower,pvpower,pvetoday/10,pv2_power,pv2_etoday_sav/10,vz2,ez2\n");
+
                             printf ("date,pvetotal_sum/10,pvpower_sum,conscounter/10,conspower,vz1,ez1,gridpowe,pvpower,pvetoday/10,pv2_power,pv2_etoday_sav/10\n");
                             puts(outline);
                             invalid = 1;
@@ -974,7 +973,7 @@ int main(int argc, char **argv)
                         // send curl string for pvoutput.org
 
 //                        send_data (time_info,pvetotal_sum/10, pvpower_sum,conscounter/10 , conspower, uac, pvtemp);
-// send 4 extended data, donation required
+// new: send 4 extended data for PV1 and PV2, donation required
                         send_data (time_info,pvetotal_sum/10, pvpower_sum,conscounter/10 , conspower, uac, pvtemp,pvpower,pvetoday/10,pv2_power,pv2_etoday_sav/10 );
 
                     }
