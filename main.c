@@ -358,6 +358,14 @@ void publish_power(struct mosquitto* mosq, char* topic, int power)
 
 
 
+char* replace_char(char* str, char find, char replace){
+    char *current_pos = strchr(str,find);
+    while (current_pos) {
+        *current_pos = replace;
+        current_pos = strchr(current_pos,find);
+    }
+    return str;
+}
 
 
 // get timestamp from vzlogger EPOCH Secs * 1000 (ms) and ctr value in float
@@ -493,6 +501,7 @@ int main(int argc, char **argv)
 	struct tm *time_info;
 	char str[80];
 	char outline[256];
+	char instr[256];
 
 	FILE *fp;
 	int64_t mtime = 300/5;  // default sampling time in seconds, 1 minutes
@@ -532,6 +541,12 @@ int main(int argc, char **argv)
     int pv2_etoday_sav = 0;   // OpenDTU Bug bei Sonnenuntergang
     int pvetotal_sum = 0;     // etotal von PV1 und PV2
     int pvpower_sum = 0;      // sum of pvpower and pv2_power;
+    int pvetotal_sav = 0;
+
+    float ioff=286.0;                    // offsets ab 09.05.2023 MK7.1 mod
+    float eoff=77.9;
+    float pv1off=67464.609;
+    float pv2off=347.89;
 
 	// --- copy args
 	if (argc < 2) {
@@ -639,6 +654,38 @@ int main(int argc, char **argv)
                     }
                     else {
                         start=0;   // start sucessfull
+                        // reload pvetotal_sav and pv2_etotal_sav from the last the midnight log values
+                        // wenn die wechselrichter nicht erreichbar sind werden diese werte genommen
+
+                        if ((fp = fopen("/var/log/ehz_logger_v2/midnight.log", "r")) == NULL) {
+                            printf("%s Warning cant open Midnight Logfile\n", debugtime);
+                        }
+                        else {
+                            while (!feof(fp)) {
+                                fgets (outline, sizeof(outline), fp);
+                                if (strlen(outline) > 20)
+                                    strncpy(instr,outline,255);
+                                else
+                                    break;
+                            }
+                            fclose(fp);
+                            if (strlen(instr) > 40) {
+                                float dummy;
+                                float fpv1tot;
+                                float fpv2tot;
+                                replace_char(instr, ';', ' ');
+
+                                sscanf(instr,"%s %f %f %f %f %f %f %f %f %f %f %f %f %f",
+                                    outline, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy,&fpv1tot,&dummy,&fpv2tot, &dummy, &dummy);
+
+
+                                pvetotal_sav    = (fpv1tot + pv1off)*10000.0;
+                                pv2_etotal_sav =  (fpv2tot + pv2off)*10000.0;
+
+                                printf ("Restore pvcounters from  midnight file %f %f %d %d\n\n", fpv1tot, fpv2tot,pvetotal_sav/10,pv2_etotal_sav/10);
+
+                            }
+                        }
 
                     }
 
@@ -693,11 +740,17 @@ int main(int argc, char **argv)
                     else {
                         printf ("Warning, no wr data received, skip values %s\n", debugtime);
                         pvpower = 0;
-                        pvetotal = 0;
+                        pvetotal = pvetotal_sav;
                         uac = 0.0;
                         pvtemp = 0.0;
                     }
                     sbfstarted=0;  // activate sbfspot call again
+
+                    // sicherstellen dass erzeugungzaehler immer grösser sind, nie kleiner
+                    if (pvetotal < pvetotal_sav)
+                        pvetotal = pvetotal_sav;
+                    else
+                        pvetotal_sav = pvetotal;
 
 // specialhandling für HMS PV2:
 // die Werte etotal und etoday können in Bereich Sonnenuntergang falsch sein
@@ -776,10 +829,6 @@ int main(int argc, char **argv)
                           && midnight_flag == 0  )  {
                          midnight_flag = 1;                   // aber nur einmal
                         //  logtime
-                        float ioff=286.0;                    // offser ab 09.05.2023 MK7.1 mod
-                        float eoff=77.9;
-                        float pv1off=67464.609;
-                        float pv2off=347.89;
 
                         float z1b,z1l, z2b, z2l, z3e, z3l, z3b, pv1today, pv1tot, pv2today, pv2tot;
                         if (verbose) puts("Write to Midnight Logfile\n");
