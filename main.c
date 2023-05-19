@@ -947,13 +947,16 @@ int main(int argc, char **argv)
                     // damit der initiale Wert vz2 (virtueller Differenz Zaehler) ist
 
 
-
+                    // conscounter ist einfach vz1, nicht so kompliziert
 
                     if (firstloop) {
-                        conscounterprev = pvetotal_sum - ez1 + vz1;
+                        conscounterprev = vz1;
+ //                     conscounterprev = pvetotal_sum - ez1 + vz1;
                         firstloop = 0;
                     }
-                    conscounter = pvetotal_sum - ez1 + vz1;
+                    conscounter = vz1;
+//                  conscounter = pvetotal_sum - ez1 + vz1;
+
 
 
                     if (conscounter < conscounterprev)
