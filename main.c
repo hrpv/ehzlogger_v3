@@ -543,6 +543,8 @@ int main(int argc, char **argv)
     int pvpower_sum = 0;      // sum of pvpower and pv2_power;
     int pvetotal_sav = 0;
 
+    int conscounterwarn = 0;  // reduce number of negative conscounter warnings
+
     float ioff=286.0;                    // offsets ab 09.05.2023 MK7.1 mod
     float eoff=77.9;
     float pv1off=67464.609;
@@ -940,12 +942,11 @@ int main(int argc, char **argv)
 ;
 
                     // Gesamtzaehlerstand Verbrauch (unit Wh):
-                    //PVZaehler-Einspeisezaehler+Bezugszaehler
-                    //wenn Gesamtzaehlerstand < Gesamtzaehlerstand_Previous,
-                    //dann nutze PreviousZahlerstnd
+                    // PVZaehler-Einspeisezaehler+Bezugszaehler
+                    // wenn Gesamtzaehlerstand < Gesamtzaehlerstand_Previous,
+                    // dann nutze PreviousZahlerstnd
                     // beim ersten durchlauf könnte ein initialer offset gesetzt werden
                     // damit der initiale Wert vz2 (virtueller Differenz Zaehler) ist
-
 
 
 
@@ -958,7 +959,11 @@ int main(int argc, char **argv)
 
                     if (conscounter < conscounterprev)
                     {
-                       printf("%s Warning: neg. conscounter, correction\n",debugtime);
+                       conscounterwarn++;
+                       if (conscounterwarn >=5){
+                            printf("%s Warning: neg. conscounter, correction\n",debugtime);
+                            conscounterwarn = 0;
+                       }
                        conscounter=conscounterprev;
                     }
                     conscounterprev=conscounter;
