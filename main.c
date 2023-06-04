@@ -544,6 +544,7 @@ int main(int argc, char **argv)
     int pvetotal_sav = 0;
 
     int conscounterwarn = 0;  // reduce number of negative conscounter warnings
+    int pvpowerwarn = 0;      // reduce number of pvpower correction warnings
 
     float ioff=286.0;                    // offsets ab 09.05.2023 MK7.1 mod
     float eoff=77.9;
@@ -893,7 +894,13 @@ int main(int argc, char **argv)
                     if (pvpower_sum > 0) {
                         if (pvpower_avg  + gridpower <  MINCONS) {  // Verbrauch < MINCONS (MINCONS=100 W)
                             pvpower_corr = -gridpower + max(MINCONS, conspower_filt/10);   // Korrektur verschönern, mind. Verbrauch 100W oder letzter Mittelwert
-                            printf ("Warning, corrected pvpower: %s old: %d new: %d \n", debugtime,pvpower_avg,pvpower_corr);
+
+                            if (pvpowerwarn > 10) {   //warning every ten corrections
+                                printf ("Warning, corrected pvpower: %s old: %d new: %d ", debugtime,pvpower_avg,pvpower_corr);
+                                printf("pvpower_avg %d gridpower %d conspower_filt/10  %d\n", pvpower_avg,gridpower,conspower_filt/10 );
+                                pvpowerwarn = 0;
+                            }
+                            pvpowerwarn++;
                         }
                         else
                             pvpower_corr = pvpower_avg;
@@ -960,7 +967,7 @@ int main(int argc, char **argv)
                     if (conscounter < conscounterprev)
                     {
                        conscounterwarn++;
-                       if (conscounterwarn >=5){
+                       if (conscounterwarn > 10){
                             printf("%s Warning: neg. conscounter, correction\n",debugtime);
                             conscounterwarn = 0;
                        }
