@@ -82,4 +82,4 @@ account on pvoutput.org
 see pvoutkeys.h
 
 
-![Blockdiagram](docs/ehzlogger.pdf)
+![Blockdiagram](docs/blockdiagram.png)
