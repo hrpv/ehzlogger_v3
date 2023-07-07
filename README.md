@@ -81,3 +81,5 @@ account on pvoutput.org
 -------------------------
 see pvoutkeys.h
 
+picture
+![Contribution guidelines for this project](docs/CONTRIBUTING.md)
