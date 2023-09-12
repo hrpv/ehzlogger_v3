@@ -81,3 +81,9 @@ account on pvoutput.org
 -------------------------
 see pvoutkeys.h
 
+
+![Blockdiagram](docs/blockdiagram.png)
+
+# More Docs
+
+[Docs](docs/ehzlogger_1.pdf)
