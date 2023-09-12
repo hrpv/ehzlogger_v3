@@ -116,6 +116,8 @@
 // #define EHZTOPIC_GRIDPWR "ehzmeter/power"       // gridpower für evcc
 
 #define EHZTOPIC_PVPWR "ehzmeter/pvpower"          // pvpower fuer evcc
+#define EHZTOPIC_PVTODAY "ehzmeter/pvtoday"        // pv energy today in 0.1wh (int)
+#define EHZTOPIC_PVTOTAL "ehzmeter/pvtotal"        // pv energy total in 0.1wh (int)
 
 #define MBMD_TOPIC_PWR "mbmd/cgex3x02-1/Power"     // float in Watt. plus Bezug negativ Lieferung
 #define MBMD_TOPIC_IMP "mbmd/cgex3x02-1/Import"    // float Bezug in kwh
@@ -544,6 +546,7 @@ int main(int argc, char **argv)
     int pvetotal_sav = 0;
 
     int conscounterwarn = 0;  // reduce number of negative conscounter warnings
+    int conspowerwarn = 0;    // reduce number of negative conspower warnings
     int pvpowerwarn = 0;      // reduce number of pvpower correction warnings
 
     float ioff=286.0;                    // offsets ab 09.05.2023 MK7.1 mod
@@ -895,7 +898,7 @@ int main(int argc, char **argv)
                         if (pvpower_avg  + gridpower <  MINCONS) {  // Verbrauch < MINCONS (MINCONS=100 W)
                             pvpower_corr = -gridpower + max(MINCONS, conspower_filt/10);   // Korrektur verschönern, mind. Verbrauch 100W oder letzter Mittelwert
 
-                            if (pvpowerwarn > 10) {   //warning every ten corrections
+                            if (pvpowerwarn > 20) {   //warning every twenty corrections
                                 printf ("Warning, corrected pvpower: %s old: %d new: %d ", debugtime,pvpower_avg,pvpower_corr);
                                 printf("pvpower_avg %d gridpower %d conspower_filt/10  %d\n", pvpower_avg,gridpower,conspower_filt/10 );
                                 pvpowerwarn = 0;
@@ -910,8 +913,16 @@ int main(int argc, char **argv)
                    // publish qrid watts for evcc
 //                    publish_power(mosq, EHZTOPIC_GRIDPWR, gridpower);
 
-                   // publish pvpowercorr watts for evcc
+                   // publish pvpowercorr watts for evcc (and victron)
                     publish_power(mosq, EHZTOPIC_PVPWR,  pvpower_corr);
+
+                   // publish energy pvtoday in 0.1Wh for victron, divide by 10000 for kwh
+                    publish_power(mosq, EHZTOPIC_PVTODAY,  pvetoday+pv2_etoday_sav);
+
+                   // publish energy pvtotal in 0.1Wh for victron, divide by 10000 for kwh
+                    publish_power(mosq, EHZTOPIC_PVTOTAL,  pvetotal_sum);
+
+
 
                 // debug: put pvpower[w], pvetotal, vz, ez to separate logfile every minute unit 0.1wh
                     if (trace) {
@@ -940,9 +951,13 @@ int main(int argc, char **argv)
                     }
 
 
-                    if (conspower < 0) {   // should never happen again!
-                       printf("%s Warning: neg. consumption, correction\n",debugtime);
-                       conspower = (apvpower[2]-aepower[2]-avpower[2]+ apvpower[0]-aepower[0]-avpower[0])/2;
+                    if (conspower < 0) {   // Battery Operation: neg. conspower still possible
+                        conspowerwarn++;
+                        if (conspowerwarn > 50) {
+                            conspowerwarn=0;
+                            printf("%s Warning: neg. consumption, correction\n",debugtime);
+                        }
+                        conspower = (apvpower[2]-aepower[2]-avpower[2]+ apvpower[0]-aepower[0]-avpower[0])/2;
                     }
                     // Werte für Mittelwertkorrektur speichern (alles integer)
                     apvpower[0]=apvpower[1]; apvpower[1]=apvpower[2]; apvpower[2]=pvpower;
@@ -967,7 +982,7 @@ int main(int argc, char **argv)
                     if (conscounter < conscounterprev)
                     {
                        conscounterwarn++;
-                       if (conscounterwarn > 10){
+                       if (conscounterwarn > 50){
                             printf("%s Warning: neg. conscounter, correction\n",debugtime);
                             conscounterwarn = 0;
                        }
