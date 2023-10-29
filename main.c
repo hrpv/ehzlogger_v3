@@ -10,10 +10,13 @@
 // Die Werte des EMH Zaehlers und SMA WR werden weiterhin per curl unverändert an den Account Aichwald bei pvoutput.org weitergeschickt
 // -------------------------------------------------------------------------------------------------------------------------------------------
 
-// grosser Update 10.05.2023:
-// was noch fehlt ist die Erfassung von den Hoymiles Wechselrichtern
-// damit die PV Leistung ungefähr passt wird temporär einfach die SMA WR Leistung für die Rechnung verdoppelt, damit nicht immer
-// negative Hausverbrauchswerte rauskommen, beim Plausi-Check
+// 17.10.2023
+// sma + hoymiles leistung pro phase übertragen, damit die victron anzeige ac load stimmiger ist.
+// korrektur rechnung für pv leitung deaktiviert, bei negativem hausverbrauch leistung auf null gesetzt.
+// rechnung ist eh schwieriger geworden, da victron auf null regelt.
+// langfristig kann man den log nach pvoutput.org canceln
+//
+//
 
 // 15.02.2032:
 // Hoymiles WR dazu pv2_xxx
@@ -115,9 +118,10 @@
 // unsused: gridpower is now "mbmd/cgex3x02-1/Power"
 // #define EHZTOPIC_GRIDPWR "ehzmeter/power"       // gridpower für evcc
 
-#define EHZTOPIC_PVPWR "ehzmeter/pvpower"          // pvpower fuer evcc
+#define EHZTOPIC_PVPWR "ehzmeter/pvpower"          // pvpower fuer evcc und victron
 #define EHZTOPIC_PVTODAY "ehzmeter/pvtoday"        // pv energy today in 0.1wh (int)
 #define EHZTOPIC_PVTOTAL "ehzmeter/pvtotal"        // pv energy total in 0.1wh (int)
+#define EHZTOPIC_PVPWRL123 "ehzmeter/pvpwrl123"    // 3 CSV-Values L1,L2,L3 pvpower+pv2_l1_pwr,pv2_l2_pwr,pv3_l3_pwr
 
 #define MBMD_TOPIC_PWR "mbmd/cgex3x02-1/Power"     // float in Watt. plus Bezug negativ Lieferung
 #define MBMD_TOPIC_IMP "mbmd/cgex3x02-1/Import"    // float Bezug in kwh
@@ -128,13 +132,18 @@
 #define HMS_TOPIC_DAY "solar/ac/yieldday"          // float Wh  -> x10 für 0.1 wh     int pv2_today
 #define HMS_TOPIC_FLG "solar/ac/is_valid"          // int flag                          int pv2_valid
 
+#define HMS_TOPIC_L1_PWR "solar/116480421861/0/power"
+#define HMS_TOPIC_L2_PWR "solar/116480156369/0/power"
+#define HMS_TOPIC_L3_PWR "solar/116480424201/0/power"
 
 
-#define MINCONS 100    //minimum 100W Power consumption
+
+#define MINCONS 0    //minimum  Power consumption was 100W, set to 0 with Victron Battery
 
 
 static char *ptopics[] = {MQTT_TOPIC_CHN0,MQTT_TOPIC_CHN1,MQTT_TOPIC_WR,MBMD_TOPIC_PWR,
-    MBMD_TOPIC_IMP,MBMD_TOPIC_EXP,HMS_TOPIC_PWR,HMS_TOPIC_TOT,HMS_TOPIC_DAY,HMS_TOPIC_FLG};
+    MBMD_TOPIC_IMP,MBMD_TOPIC_EXP,HMS_TOPIC_PWR,HMS_TOPIC_TOT,HMS_TOPIC_DAY,HMS_TOPIC_FLG,
+    HMS_TOPIC_L1_PWR,HMS_TOPIC_L2_PWR,HMS_TOPIC_L3_PWR};
 // static int numtopics=3;
 
 static volatile int run = 1;       // to check if volatile is really needed
@@ -161,6 +170,9 @@ static volatile int pv2_etotal=0;  // pv2 total energy in 0.1 wh
 static volatile int pv2_etoday=0;  // pv2 today energy in 0.1 wh
 static volatile int pv2_flag=0;    // pv2 ac valid flag
 
+static volatile int pv2_l1_pwr=0;   // split power to make victron happy
+static volatile int pv2_l2_pwr=0;
+static volatile int pv2_l3_pwr=0;
 
 
 // signal handler for for CTL C and terminate process
@@ -217,6 +229,10 @@ void on_connect(struct mosquitto *mosq, void *obj, int reason_code)
     rc+=mosquitto_subscribe(mosq,NULL,ptopics[7],1);
     rc+=mosquitto_subscribe(mosq,NULL,ptopics[8],1);
     rc+=mosquitto_subscribe(mosq,NULL,ptopics[9],1);
+
+    rc+=mosquitto_subscribe(mosq,NULL,ptopics[10],1);
+    rc+=mosquitto_subscribe(mosq,NULL,ptopics[11],1);
+    rc+=mosquitto_subscribe(mosq,NULL,ptopics[12],1);
 
 
 	if(rc != MOSQ_ERR_SUCCESS){
@@ -325,6 +341,24 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
             if (dbgflag) printf("pv2 ac valid received %d\n", pv2_flag);
             break;
         }
+        mosquitto_topic_matches_sub(HMS_TOPIC_L1_PWR, msg->topic, &match);
+        if (match) {
+            pv2_l1_pwr = atof(msg->payload);
+            if (dbgflag) printf("pv2 l1 pwr received %d\n", pv2_flag);
+            break;
+        }
+        mosquitto_topic_matches_sub(HMS_TOPIC_L2_PWR, msg->topic, &match);
+        if (match) {
+            pv2_l2_pwr= atof(msg->payload);
+            if (dbgflag) printf("pv2 l2 pwr received %d\n", pv2_flag);
+            break;
+        }
+        mosquitto_topic_matches_sub(HMS_TOPIC_L3_PWR, msg->topic, &match);
+        if (match) {
+            pv2_l3_pwr = atof(msg->payload);
+            if (dbgflag) printf("pv2 l3 pwr received %d\n", pv2_flag);
+            break;
+        }
 
 
     } while (0);
@@ -357,6 +391,32 @@ void publish_power(struct mosquitto* mosq, char* topic, int power)
         fprintf(stderr, "Error publishing: %s\n", mosquitto_strerror(rc));
     }
 }
+
+/* This function publish the pv power per phase in int watts:*/
+void publish_powerl123(struct mosquitto* mosq, char* topic, int pwrl1,int pwrl2,int pwrl3)
+{
+    char payload[40];
+    int rc;
+
+    /* Print it to a string for easy human reading - payload format is highly
+     * application dependent. */
+    snprintf(payload, sizeof(payload), "%d,%d,%d", pwrl1,pwrl2,pwrl3);
+
+    /* Publish the message
+     * mosq - our client instance
+     * *mid = NULL - we don't want to know what the message id for this message is
+     * topic = "example/temperature" - the topic on which this message will be published
+     * payloadlen = strlen(payload) - the length of our payload in bytes
+     * payload - the actual payload
+     * qos = 2 - publish with QoS 2 for this example
+     * retain = false - do not use the retained message feature for this message
+     */
+    rc = mosquitto_publish(mosq, NULL, topic, strlen(payload), payload, 2, false);
+    if (rc != MOSQ_ERR_SUCCESS) {
+        fprintf(stderr, "Error publishing: %s\n", mosquitto_strerror(rc));
+    }
+}
+
 
 
 
@@ -908,10 +968,16 @@ int main(int argc, char **argv)
                         else
                             pvpower_corr = pvpower_avg;
                     }
-                    conspower = pvpower_corr + gridpower;
+ //XXX deactivate pvpower_corr and corrected conspower
+                     pvpower_corr = pvpower_sum;   // use uncorrected values
 
-                   // publish qrid watts for evcc
-//                    publish_power(mosq, EHZTOPIC_GRIDPWR, gridpower);
+                     conspower = pvpower_corr + gridpower;
+                     if (conspower < 0) conspower = 0;   // XXX simply set to zero
+
+
+
+                   // publish qrid watts for evcc (evcc gets values direct from mbmd)
+                   // publish_power(mosq, EHZTOPIC_GRIDPWR, gridpower);
 
                    // publish pvpowercorr watts for evcc (and victron)
                     publish_power(mosq, EHZTOPIC_PVPWR,  pvpower_corr);
@@ -922,6 +988,8 @@ int main(int argc, char **argv)
                    // publish energy pvtotal in 0.1Wh for victron, divide by 10000 for kwh
                     publish_power(mosq, EHZTOPIC_PVTOTAL,  pvetotal_sum);
 
+                    // publish pvpowers per phase
+                    publish_powerl123(mosq,EHZTOPIC_PVPWRL123, pvpower+pv2_l1_pwr,pv2_l2_pwr,pv2_l3_pwr);
 
 
                 // debug: put pvpower[w], pvetotal, vz, ez to separate logfile every minute unit 0.1wh
