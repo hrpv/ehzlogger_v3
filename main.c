@@ -10,6 +10,9 @@
 // Die Werte des EMH Zaehlers und SMA WR werden weiterhin per curl unverändert an den Account Aichwald bei pvoutput.org weitergeschickt
 // -------------------------------------------------------------------------------------------------------------------------------------------
 
+// 16.02.2024
+// Balkonkraftwerk (112484880479) auf L2 dazu addiert
+
 // 17.10.2023
 // sma + hoymiles leistung pro phase übertragen, damit die victron anzeige ac load stimmiger ist.
 // korrektur rechnung für pv leitung deaktiviert, bei negativem hausverbrauch leistung auf null gesetzt.
@@ -136,6 +139,7 @@
 #define HMS_TOPIC_L2_PWR "solar/116480156369/0/power"
 #define HMS_TOPIC_L3_PWR "solar/116480424201/0/power"
 
+#define HMS_TOPIC_L2_B_PWR "solar/112484880479/0/power"    // balkonkraftwerk
 
 
 #define MINCONS 0    //minimum  Power consumption was 100W, set to 0 with Victron Battery
@@ -143,7 +147,7 @@
 
 static char *ptopics[] = {MQTT_TOPIC_CHN0,MQTT_TOPIC_CHN1,MQTT_TOPIC_WR,MBMD_TOPIC_PWR,
     MBMD_TOPIC_IMP,MBMD_TOPIC_EXP,HMS_TOPIC_PWR,HMS_TOPIC_TOT,HMS_TOPIC_DAY,HMS_TOPIC_FLG,
-    HMS_TOPIC_L1_PWR,HMS_TOPIC_L2_PWR,HMS_TOPIC_L3_PWR};
+    HMS_TOPIC_L1_PWR,HMS_TOPIC_L2_PWR,HMS_TOPIC_L3_PWR,HMS_TOPIC_L2_B_PWR};
 // static int numtopics=3;
 
 static volatile int run = 1;       // to check if volatile is really needed
@@ -173,7 +177,7 @@ static volatile int pv2_flag=0;    // pv2 ac valid flag
 static volatile int pv2_l1_pwr=0;   // split power to make victron happy
 static volatile int pv2_l2_pwr=0;
 static volatile int pv2_l3_pwr=0;
-
+static volatile int pv2_l2_b_pwr=0;
 
 // signal handler for for CTL C and terminate process
 // note, this is called only once, else you need to activate the signal again inside the signal handler
@@ -233,7 +237,7 @@ void on_connect(struct mosquitto *mosq, void *obj, int reason_code)
     rc+=mosquitto_subscribe(mosq,NULL,ptopics[10],1);
     rc+=mosquitto_subscribe(mosq,NULL,ptopics[11],1);
     rc+=mosquitto_subscribe(mosq,NULL,ptopics[12],1);
-
+    rc+=mosquitto_subscribe(mosq,NULL,ptopics[13],1);
 
 	if(rc != MOSQ_ERR_SUCCESS){
 		fprintf(stderr, "Error subscribing: %s\n", mosquitto_strerror(rc));
@@ -351,6 +355,12 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
         if (match) {
             pv2_l2_pwr= atof(msg->payload);
             if (dbgflag) printf("pv2 l2 pwr received %d\n", pv2_flag);
+            break;
+        }
+        mosquitto_topic_matches_sub(HMS_TOPIC_L2_B_PWR, msg->topic, &match);
+        if (match) {
+            pv2_l2_b_pwr= atof(msg->payload);
+            if (dbgflag) printf("pv2 l2 balkon pwr received %d\n", pv2_flag);
             break;
         }
         mosquitto_topic_matches_sub(HMS_TOPIC_L3_PWR, msg->topic, &match);
@@ -988,8 +998,8 @@ int main(int argc, char **argv)
                    // publish energy pvtotal in 0.1Wh for victron, divide by 10000 for kwh
                     publish_power(mosq, EHZTOPIC_PVTOTAL,  pvetotal_sum);
 
-                    // publish pvpowers per phase
-                    publish_powerl123(mosq,EHZTOPIC_PVPWRL123, pvpower+pv2_l1_pwr,pv2_l2_pwr,pv2_l3_pwr);
+                    // publish pvpowers per phase, added balkon on l2
+                    publish_powerl123(mosq,EHZTOPIC_PVPWRL123, pvpower+pv2_l1_pwr,pv2_l2_pwr+pv2_l2_b_pwr,pv2_l3_pwr);
 
 
                 // debug: put pvpower[w], pvetotal, vz, ez to separate logfile every minute unit 0.1wh
