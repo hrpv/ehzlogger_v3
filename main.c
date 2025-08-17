@@ -136,7 +136,10 @@
 #define HMS_TOPIC_FLG "solar/ac/is_valid"          // int flag                          int pv2_valid
 
 #define HMS_TOPIC_L1_PWR "solar/116480421861/0/power"
-#define HMS_TOPIC_L2_PWR "solar/116480156369/0/power"
+
+// #define HMS_TOPIC_L2_PWR "solar/116480156369/0/power"
+#define HMS_TOPIC_L2_PWR "solar/1164a011c019/0/power"
+
 #define HMS_TOPIC_L3_PWR "solar/116480424201/0/power"
 
 #define HMS_TOPIC_L2_B_PWR "solar/112484880479/0/power"    // balkonkraftwerk
