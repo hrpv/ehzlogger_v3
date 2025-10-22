@@ -10,6 +10,19 @@
 // Die Werte des EMH Zaehlers und SMA WR werden weiterhin per curl unverändert an den Account Aichwald bei pvoutput.org weitergeschickt
 // -------------------------------------------------------------------------------------------------------------------------------------------
 
+
+// 22.10.2025
+// mqtt publish jetzt mit retain flag, wegen evcc sonst schreibt evcc zwischenwerte in
+// pvtotal in die datenbank evcc.db jede minute "solarAccYield","{""pvmeter"":{""
+// "ehzmeter/pvpower"          // pvpower fuer evcc und victron
+// "ehzmeter/pvtoday"        // pv energy today in 0.1wh (int)
+// "ehzmeter/pvtotal"        // pv energy total in 0.1wh (int)
+// "ehzmeter/pvpwrl123"    // 3 CSV-Values L1,L2,L3 pvpower+pv2_l1_pwr,pv2_l2_pwr,pv3_l3_pwr
+
+// pv2power power L1 L2 L3 Balkon auf Null setzen wenn solar/ac/is_valid 0 (invalid)
+// hing schon manchmal auf 1 W speziell L2 (neuer WR)
+
+
 // 16.02.2024
 // Balkonkraftwerk (112484880479) auf L2 dazu addiert
 
@@ -21,7 +34,7 @@
 //
 //
 
-// 15.02.2032:
+// 15.02.2023:
 // Hoymiles WR dazu pv2_xxx
 // solar/ac/power 39.0          W  -> int pv2_power
 // solar/ac/yieldtotal 439.916  Kwh -> x10000 für 0.1 wh  int pv2_etotal
@@ -326,19 +339,19 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
 
         mosquitto_topic_matches_sub(HMS_TOPIC_PWR, msg->topic, &match);
         if (match) {
-            pv2_power = atof(msg->payload);
+            if (pv2_flag == 1) pv2_power = atof(msg->payload); else pv2_power= 0;
             if (dbgflag) printf("pv2 power received %d\n", pv2_power);
             break;
         }
         mosquitto_topic_matches_sub(HMS_TOPIC_TOT, msg->topic, &match);
         if (match) {
-            pv2_etotal = 10000 * atof(msg->payload);
+            if (pv2_flag == 1) pv2_etotal = 10000 * atof(msg->payload);
             if (dbgflag) printf("pv2 etotal received %d\n", pv2_etotal);
             break;
         }
         mosquitto_topic_matches_sub(HMS_TOPIC_DAY, msg->topic, &match);
         if (match) {
-            pv2_etoday = 10 * atof(msg->payload);
+            if (pv2_flag == 1) pv2_etoday = 10 * atof(msg->payload);
             if (dbgflag) printf("pv2 etoday received %d\n", pv2_etoday);
             break;
         }
@@ -350,25 +363,25 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
         }
         mosquitto_topic_matches_sub(HMS_TOPIC_L1_PWR, msg->topic, &match);
         if (match) {
-            pv2_l1_pwr = atof(msg->payload);
+            if (pv2_flag == 1) pv2_l1_pwr = atof(msg->payload); else pv2_l1_pwr = 0;
             if (dbgflag) printf("pv2 l1 pwr received %d\n", pv2_flag);
             break;
         }
         mosquitto_topic_matches_sub(HMS_TOPIC_L2_PWR, msg->topic, &match);
         if (match) {
-            pv2_l2_pwr= atof(msg->payload);
+            if (pv2_flag == 1) pv2_l2_pwr= atof(msg->payload); else pv2_l2_pwr = 0;
             if (dbgflag) printf("pv2 l2 pwr received %d\n", pv2_flag);
             break;
         }
         mosquitto_topic_matches_sub(HMS_TOPIC_L2_B_PWR, msg->topic, &match);
         if (match) {
-            pv2_l2_b_pwr= atof(msg->payload);
+            if (pv2_flag == 1) pv2_l2_b_pwr= atof(msg->payload); else pv2_l2_b_pwr = 0;
             if (dbgflag) printf("pv2 l2 balkon pwr received %d\n", pv2_flag);
             break;
         }
         mosquitto_topic_matches_sub(HMS_TOPIC_L3_PWR, msg->topic, &match);
         if (match) {
-            pv2_l3_pwr = atof(msg->payload);
+            if (pv2_flag == 1) pv2_l3_pwr = atof(msg->payload); else pv2_l3_pwr = 0;
             if (dbgflag) printf("pv2 l3 pwr received %d\n", pv2_flag);
             break;
         }
@@ -397,9 +410,9 @@ void publish_power(struct mosquitto* mosq, char* topic, int power)
      * payloadlen = strlen(payload) - the length of our payload in bytes
      * payload - the actual payload
      * qos = 2 - publish with QoS 2 for this example
-     * retain = false - do not use the retained message feature for this message
+     * retain = true  use the retained message feature for this message
      */
-    rc = mosquitto_publish(mosq, NULL, topic, strlen(payload), payload, 2, false);
+    rc = mosquitto_publish(mosq, NULL, topic, strlen(payload), payload, 2, true);
     if (rc != MOSQ_ERR_SUCCESS) {
         fprintf(stderr, "Error publishing: %s\n", mosquitto_strerror(rc));
     }
@@ -422,9 +435,9 @@ void publish_powerl123(struct mosquitto* mosq, char* topic, int pwrl1,int pwrl2,
      * payloadlen = strlen(payload) - the length of our payload in bytes
      * payload - the actual payload
      * qos = 2 - publish with QoS 2 for this example
-     * retain = false - do not use the retained message feature for this message
+     * retain = true - use the retained message feature for this message
      */
-    rc = mosquitto_publish(mosq, NULL, topic, strlen(payload), payload, 2, false);
+    rc = mosquitto_publish(mosq, NULL, topic, strlen(payload), payload, 2, true);
     if (rc != MOSQ_ERR_SUCCESS) {
         fprintf(stderr, "Error publishing: %s\n", mosquitto_strerror(rc));
     }

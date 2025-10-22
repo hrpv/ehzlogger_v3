@@ -154,6 +154,7 @@ int send_data (struct tm *time_info,int pvetotal, int pvpower, int conscounter, 
 
     sprintf(cmdstring,"/usr/bin/bash -c \'%s >/run/user/1000/curl.log 2>&1 &\'",curlstr);
     if (verbose)  puts (cmdstring);
+//    puts (cmdstring);
     int err;
     err = system(cmdstring);
     if (verbose)  printf ("\ncurl runs in bg status: %d\n",err);
