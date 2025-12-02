@@ -11,6 +11,12 @@
 // -------------------------------------------------------------------------------------------------------------------------------------------
 
 
+// 02.12.2025 
+// pv2power power L1 L2 L3 Balkon auf Null setzen wenn solar/ac/is_valid 0 (invalid)
+// wieder rausgenommen. Der Balkonwechselrichter ist relativ häufig nicht erreichbar,
+// das führt dann zu solar/ac/is_valid 0 für ALLE wechselrichter, alle null setzen ist dann kontraproduktiv
+// Idealerweise sollte der Balkon WT besser platziert werden...
+
 // 22.10.2025
 // mqtt publish jetzt mit retain flag, wegen evcc sonst schreibt evcc zwischenwerte in
 // pvtotal in die datenbank evcc.db jede minute "solarAccYield","{""pvmeter"":{""
@@ -339,7 +345,7 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
 
         mosquitto_topic_matches_sub(HMS_TOPIC_PWR, msg->topic, &match);
         if (match) {
-            if (pv2_flag == 1) pv2_power = atof(msg->payload); else pv2_power= 0;
+            pv2_power = atof(msg->payload);
             if (dbgflag) printf("pv2 power received %d\n", pv2_power);
             break;
         }
@@ -363,25 +369,25 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
         }
         mosquitto_topic_matches_sub(HMS_TOPIC_L1_PWR, msg->topic, &match);
         if (match) {
-            if (pv2_flag == 1) pv2_l1_pwr = atof(msg->payload); else pv2_l1_pwr = 0;
+            pv2_l1_pwr = atof(msg->payload);
             if (dbgflag) printf("pv2 l1 pwr received %d\n", pv2_flag);
             break;
         }
         mosquitto_topic_matches_sub(HMS_TOPIC_L2_PWR, msg->topic, &match);
         if (match) {
-            if (pv2_flag == 1) pv2_l2_pwr= atof(msg->payload); else pv2_l2_pwr = 0;
+            pv2_l2_pwr= atof(msg->payload);
             if (dbgflag) printf("pv2 l2 pwr received %d\n", pv2_flag);
             break;
         }
         mosquitto_topic_matches_sub(HMS_TOPIC_L2_B_PWR, msg->topic, &match);
         if (match) {
-            if (pv2_flag == 1) pv2_l2_b_pwr= atof(msg->payload); else pv2_l2_b_pwr = 0;
+            pv2_l2_b_pwr= atof(msg->payload);
             if (dbgflag) printf("pv2 l2 balkon pwr received %d\n", pv2_flag);
             break;
         }
         mosquitto_topic_matches_sub(HMS_TOPIC_L3_PWR, msg->topic, &match);
         if (match) {
-            if (pv2_flag == 1) pv2_l3_pwr = atof(msg->payload); else pv2_l3_pwr = 0;
+            pv2_l3_pwr = atof(msg->payload);
             if (dbgflag) printf("pv2 l3 pwr received %d\n", pv2_flag);
             break;
         }
