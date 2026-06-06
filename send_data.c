@@ -103,7 +103,9 @@ int send_data (struct tm *time_info,int pvetotal, int pvpower, int conscounter, 
                 }
                 // HTTP error?
                 else {
+                    // Suche nach "HTTP/1.1 200 OK" oder  neu: "HTTP/2 200"
                     pac = strstr(sbfbuf, "HTTP/1.1 200 OK");
+                    if (!pac) pac = strstr(sbfbuf, "HTTP/2 200");
                     if (!pac) {
                         printf("%s Warning, HTTP/1.1 Error Response\n",debugtime );
                         curlerr = 1;
