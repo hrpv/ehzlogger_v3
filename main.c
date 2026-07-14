@@ -11,7 +11,7 @@
 // -------------------------------------------------------------------------------------------------------------------------------------------
 
 
-// 02.12.2025 
+// 02.12.2025
 // pv2power power L1 L2 L3 Balkon auf Null setzen wenn solar/ac/is_valid 0 (invalid)
 // wieder rausgenommen. Der Balkonwechselrichter ist relativ häufig nicht erreichbar,
 // das führt dann zu solar/ac/is_valid 0 für ALLE wechselrichter, alle null setzen ist dann kontraproduktiv
@@ -641,8 +641,12 @@ int main(int argc, char **argv)
     int conspowerwarn = 0;    // reduce number of negative conspower warnings
     int pvpowerwarn = 0;      // reduce number of pvpower correction warnings
 
-    float ioff=286.0;                    // offsets ab 09.05.2023 MK7.1 mod
-    float eoff=77.9;
+ //   float ioff=286.0;                    // offsets ab 09.05.2023 MK7.1 mod
+ //   float eoff=77.9;
+
+    float ioff=3816.2;                    // offsets ab 14.07.2026 Zaehlerwechsel
+    float eoff=21345.2;
+
     float pv1off=67464.609;
     float pv2off=347.89;
 

@@ -98,16 +98,17 @@ int send_data (struct tm *time_info,int pvetotal, int pvpower, int conscounter, 
                 // curl error?
                 pac = strstr(sbfbuf, "curl: (");
                 if (pac) {
-                printf("%s Warning, Error curl (%d)\n",debugtime, atoi (pac+7));
-                   curlerr = 1;
+                    printf("%s Warning, Error curl (%d)\n",debugtime, atoi (pac+7));
+                    curlerr = 1;
                 }
                 // HTTP error?
                 else {
-                    // Suche nach "HTTP/1.1 200 OK" oder  neu: "HTTP/2 200"
+                    // Suche nach "HTTP/1.1 200 OK", "HTTP/2 200" oder "HTTP/3 200"
                     pac = strstr(sbfbuf, "HTTP/1.1 200 OK");
                     if (!pac) pac = strstr(sbfbuf, "HTTP/2 200");
+                    if (!pac) pac = strstr(sbfbuf, "HTTP/3 200");
                     if (!pac) {
-                        printf("%s Warning, HTTP/1.1 Error Response\n",debugtime );
+                        printf("%s Warning, HTTP Error Response\n",debugtime );
                         curlerr = 1;
                     }
                     else {
