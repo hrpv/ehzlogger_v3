@@ -11,6 +11,26 @@
 // -------------------------------------------------------------------------------------------------------------------------------------------
 
 
+// 19.11.2026
+// Absicherung PV2 Tagesertrag (pv2_etoday_sav): Am 18.11.2026 kamen ab 09:18 yieldday und yieldtotal
+// vom HMS nicht mehr durch (is_valid 0 oder Topics ausgeblieben, nicht belegt, da kein MQTT Log).
+// pv2_etoday_sav blieb bis Mitternacht bei 225 Wh, tatsächlich waren es ca. 5 kWh, solar/ac/power lief weiter.
+// Der Gesamtzähler pv2_etotal wurde am 19.11. um 08:33 vom HMS nachgeholt.
+// Ab 16:43 hing pv2_power über Nacht auf 12 W (keine 0 Meldung mehr gekommen).
+// Neu:
+// - pv2_power wird zusätzlich in pv2_int_acc (0.1 Wh) integriert, aber nur wenn die letzte
+//   solar/ac/power Meldung nicht älter als PV2_STALE_SEC (300 s) ist, hängende Werte zählen nicht mit
+// - hängende pv2_power wird auf 0 gesetzt: nachts (SunRise/SunSet aus dem SBFspot JSON, +/- SUN_MARGIN_MIN
+//   30 min, auch pv2_l1/l2/l2_b/l3_pwr) und wenn seit PV2_STALE_SEC keine solar/ac/power Meldung kam.
+//   Sind SunRise/SunSet nicht lesbar (z.B. nach Neustart nachts), gilt nur die Zeitüberwachung
+//   Das ist nicht das 02.12.2025 Nullsetzen bei is_valid 0, is_valid wird dafür nicht ausgewertet
+// - liegt das Integral mehr als 15 % + 100 Wh über pv2_etoday_sav, wird pv2_etoday_sav aus dem
+//   Integral geführt (pvtoday für Victron und PV2Today im midnight.log folgen automatisch).
+//   Ende, sobald is_valid 1 ist und pv2_etoday vom HMS wieder aufgeholt hat
+// - jeder Wechsel von solar/ac/is_valid wird mit Uhrzeit ins errlog geschrieben
+// - Integral und Fallback-Flag werden um 23:46 zusammen mit pv2_etoday_sav zurückgesetzt
+// pv2_etotal_sav ist unverändert, der Gesamtzähler wird weiterhin vom HMS nachgeholt
+
 // 02.12.2025
 // pv2power power L1 L2 L3 Balkon auf Null setzen wenn solar/ac/is_valid 0 (invalid)
 // wieder rausgenommen. Der Balkonwechselrichter ist relativ häufig nicht erreichbar,
@@ -195,6 +215,9 @@ static volatile int pv2_power=0;   // pv2 power in watt
 static volatile int pv2_etotal=0;  // pv2 total energy in 0.1 wh
 static volatile int pv2_etoday=0;  // pv2 today energy in 0.1 wh
 static volatile int pv2_flag=0;    // pv2 ac valid flag
+static volatile time_t pv2_power_ts=0; // Zeitpunkt der letzten solar/ac/power Meldung
+#define PV2_STALE_SEC 300   // keine solar/ac/power Meldung seit 5 min -> pv2_power gilt als haengend
+#define SUN_MARGIN_MIN 30    // PV2 Leistung wird auf 0 gesetzt wenn 30 min vor SunRise bzw. nach SunSet
 
 static volatile int pv2_l1_pwr=0;   // split power to make victron happy
 static volatile int pv2_l2_pwr=0;
@@ -346,6 +369,7 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
         mosquitto_topic_matches_sub(HMS_TOPIC_PWR, msg->topic, &match);
         if (match) {
             pv2_power = atof(msg->payload);
+            pv2_power_ts = time(NULL);
             if (dbgflag) printf("pv2 power received %d\n", pv2_power);
             break;
         }
@@ -497,6 +521,20 @@ void get_time_stamp_cntr(char *buf, int64_t *time, int *cntr)
 }
 
 
+// SunRise / SunSet aus dem SBFspot JSON, Rueckgabe Minuten seit Mitternacht, -1 wenn nicht lesbar
+// z.B. "SunRise": "08/11/2021 07:21:00", es wird nur der Uhrzeitanteil ausgewertet,
+// Datum und Uhrzeit muessen durch ein Leerzeichen getrennt sein
+int get_sun_minutes (char *sbfbuf, const char *key)
+{
+    char *p = strstr(sbfbuf, key);
+    int hh, mm;
+    if (p == NULL) return -1;
+    p += strlen(key);
+    if (sscanf(p, " \"%*[^ ] %d:%d", &hh, &mm) == 2 && hh >= 0 && hh < 24 && mm >= 0 && mm < 60)
+        return hh * 60 + mm;
+    return -1;
+}
+
 void get_wr_values (char *sbfbuf, int *pvpower, int *pvetotal, double *uac, double *pvtemp, int *pvetoday, char *debugtime)
 {
     long filesize;
@@ -636,6 +674,12 @@ int main(int argc, char **argv)
     int pvetotal_sum = 0;     // etotal von PV1 und PV2
     int pvpower_sum = 0;      // sum of pvpower and pv2_power;
     int pvetotal_sav = 0;
+
+    double pv2_int_acc = 0.0;      // Integral pv2_power seit Mitternacht in 0.1 Wh (Fallback fuer pv2_etoday)
+    int pv2_fallback_active = 0;   // 1: pv2_etoday_sav wird aus dem Integral gefuehrt
+    int pv2_flag_old = -1;         // fuer Logging von is_valid Wechseln
+    int sunrise_min = -1;          // SunRise von SBFspot in Minuten seit Mitternacht, -1 unbekannt
+    int sunset_min = -1;           // SunSet  von SBFspot in Minuten seit Mitternacht, -1 unbekannt
 
     int conscounterwarn = 0;  // reduce number of negative conscounter warnings
     int conspowerwarn = 0;    // reduce number of negative conspower warnings
@@ -838,6 +882,15 @@ int main(int argc, char **argv)
                     if (wr_flag) {  // sbfspot data over mqtt received
                         wr_flag = 0;
                         get_wr_values (wr_buf, &pvpower, &pvetotal, &uac, &pvtemp, &pvetoday, debugtime);
+                        {   // SunRise und SunSet fuer die Nachtabschaltung von pv2_power
+                            int sr = get_sun_minutes(wr_buf, "\"SunRise\":");
+                            int ss = get_sun_minutes(wr_buf, "\"SunSet\":");
+                            if (sr >= 0 && ss > sr && (sr != sunrise_min || ss != sunset_min)) {
+                                sunrise_min = sr;
+                                sunset_min = ss;
+                                printf("%s Info: SBFspot SunRise %02d:%02d SunSet %02d:%02d\n", debugtime, sr/60, sr%60, ss/60, ss%60);
+                            }
+                        }
                     }
                     else {
                         printf ("Warning, no wr data received, skip values %s\n", debugtime);
@@ -864,6 +917,47 @@ int main(int argc, char **argv)
                         pv2_etoday_sav = pv2_etoday; // save only if new value is greater
 
                     }   // reset today flags at midnight
+
+                    // Absicherung 19.11.2026: am 18.11. kamen ab 09:18 yieldday/yieldtotal nicht mehr durch,
+                    // pv2_power lief weiter. Tagesertrag daher zusaetzlich aus pv2_power integrieren.
+                    // Integriert wird nur, wenn pv2_power frisch ist (< 120 s alt), sonst wuerde ein
+                    // haengender Wert (z.B. 12 W ueber Nacht) mitintegriert.
+                    if (pv2_flag != pv2_flag_old) {   // jeden Wechsel von solar/ac/is_valid ins errlog
+                        printf("%s Info: pv2_flag (solar/ac/is_valid) %d -> %d\n", debugtime, pv2_flag_old, pv2_flag);
+                        pv2_flag_old = pv2_flag;
+                    }
+                    {   // haengende PV2 Leistung auf 0: nachts (SunRise/SunSet von SBFspot) oder wenn keine Meldung mehr kommt
+                        int nowmin = time_info->tm_hour * 60 + time_info->tm_min;
+                        int pv2_night = (sunrise_min >= 0 && sunset_min >= 0 &&
+                                         (nowmin < sunrise_min - SUN_MARGIN_MIN || nowmin > sunset_min + SUN_MARGIN_MIN));
+                        int pv2_stale = (pv2_power_ts > 0 && (time(NULL) - pv2_power_ts) > PV2_STALE_SEC);
+                        if ((pv2_night || pv2_stale) && pv2_power != 0) {
+                            printf("%s Info: pv2_power %d W set to 0 (night %d stale %d)\n", debugtime, pv2_power, pv2_night, pv2_stale);
+                            pv2_power = 0;
+                        }
+                        if (pv2_night) {   // nachts auch die Phasenwerte, sonst bleibt dort der letzte Wert stehen
+                            pv2_l1_pwr = 0;
+                            pv2_l2_pwr = 0;
+                            pv2_l2_b_pwr = 0;
+                            pv2_l3_pwr = 0;
+                        }
+                    }
+                    if (difftime > 0.0 && difftime < 600.0 && pv2_power > 0 && (time(NULL) - pv2_power_ts) < PV2_STALE_SEC) {
+                        pv2_int_acc += (double)pv2_power * difftime / 360.0;   // W * s / 360 = 0.1 Wh
+                    }
+                    if (!pv2_fallback_active && pv2_int_acc > (double)pv2_etoday_sav * 1.15 + 1000.0) {
+                        pv2_fallback_active = 1;   // Zaehler hinkt >15% + 100 Wh hinter dem Integral her
+                        printf("%s Warning, pv2_etoday_sav %d too low, use integral %d (0.1Wh) flag %d\n",
+                               debugtime, pv2_etoday_sav, (int)pv2_int_acc, pv2_flag);
+                    }
+                    if (pv2_fallback_active) {
+                        if (pv2_etoday_sav < (int)pv2_int_acc) pv2_etoday_sav = (int)pv2_int_acc;
+                        // echter Zaehler gueltig und wieder auf/ueber dem Fallback-Wert -> beenden
+                        if (pv2_flag == 1 && pv2_etoday >= pv2_etoday_sav) {
+                            pv2_fallback_active = 0;
+                            printf("%s Info, pv2_etoday from HMS valid again, end fallback\n", debugtime);
+                        }
+                    }
                     if (pv2_etotal_sav == 0) {
                        printf("%s Warning, no pv2_etotal from HMS_WR",debugtime);
                     }
@@ -924,6 +1018,8 @@ int main(int argc, char **argv)
                          midnight_flag = 0;                   // logfile schreiben wieder freigegeben
                          pv2_etoday_sav = 0;                  // reset today counters at midnight
                          pv2_etoday = 0;
+                         pv2_int_acc = 0.0;                   // Fallback-Integral zuruecksetzen
+                         pv2_fallback_active = 0;
                     }
 
                     if ( (   strncmp(logtime,"23:44",5) == 0    // schreibe log um 23:44 oder 23:45
